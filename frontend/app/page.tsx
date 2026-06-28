@@ -536,7 +536,7 @@ export default function HomePage() {
             <div
               className="relative flex-1 text-sm text-slate-600"
               onBlur={(event) => {
-                if (!event.currentTarget.contains(event.relatedTarget)) {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
                   setRecentSearchesOpen(false);
                 }
               }}
@@ -579,7 +579,19 @@ export default function HomePage() {
                           onClick={() => handleRecentSearchSelect(term)}
                           className="flex min-w-0 flex-1 items-center gap-2 text-left"
                         >
-                          <span aria-hidden="true" className="text-slate-400">clock</span>
+                                                    <svg
+                            aria-hidden="true"
+                            viewBox="0 0 24 24"
+                            className="h-4 w-4 shrink-0 text-slate-400"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <circle cx="12" cy="12" r="9" />
+                            <path d="M12 7v5l3 2" />
+                          </svg>
                           <span className="truncate">{term}</span>
                         </button>
                         <button
