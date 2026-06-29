@@ -164,6 +164,9 @@ pub enum Error {
     // Issue #423: Access Control
     BlacklistedUser = 24,
     NotWhitelisted = 25,
+    SelfReferralNotAllowed = 26,
+    DeadlineNotExtendable = 27,
+    NoFreelancerAssigned = 28,
 }
 
 #[contract]
@@ -567,6 +570,53 @@ impl EscrowContract {
         bump_instance_ttl(&e);
     }
 
+    pub fn extend_deadline(
+        e: Env,
+        client: Address,
+        job_id: u64,
+        new_deadline: u64,
+        freelancer_consent: Option<Address>,
+    ) {
+        client.require_auth();
+        require_active_access(&e, &client);
+
+        let mut job = get_job_or_panic(&e, job_id);
+
+        if job.status != JobStatus::InProgress && job.status != JobStatus::SubmittedForReview {
+            panic_with_error!(&e, Error::DeadlineNotExtendable);
+        }
+        if job.client != client {
+            panic_with_error!(&e, Error::Unauthorized);
+        }
+        if job.deadline == 0 {
+            panic_with_error!(&e, Error::DeadlineNotExtendable);
+        }
+        if new_deadline <= job.deadline {
+            panic_with_error!(&e, Error::InvalidDeadline);
+        }
+        if new_deadline <= e.ledger().timestamp() {
+            panic_with_error!(&e, Error::InvalidDeadline);
+        }
+
+        if let Some(freelancer) = &freelancer_consent {
+            if job.freelancer != Option::Some(freelancer.clone()) {
+                panic_with_error!(&e, Error::NoFreelancerAssigned);
+            }
+            freelancer.require_auth();
+            require_active_access(&e, freelancer);
+        }
+
+        let old_deadline = job.deadline;
+        job.deadline = new_deadline;
+        set_job(&e, job_id, &job);
+        bump_instance_ttl(&e);
+
+        e.events().publish(
+            (Symbol::new(&e, "deadline_extended"),),
+            (job_id, client, old_deadline, new_deadline),
+        );
+    }
+
     pub fn raise_dispute(e: Env, caller: Address, job_id: u64) {
         let mut job = get_job_or_panic(&e, job_id);
         caller.require_auth();
@@ -778,7 +828,7 @@ impl EscrowContract {
     pub fn update_fee(e: Env, new_fee_bps: i128) {
         let admin = load_admin(&e);
         admin.require_auth();
-        if new_fee_bps > MAX_FEE_BPS {
+        if new_fee_bps < 0 || new_fee_bps > MAX_FEE_BPS {
             panic_with_error!(&e, Error::FeeTooHigh);
         }
         e.storage().instance().set(&DataKey::FeeBps, &new_fee_bps);
@@ -1220,6 +1270,10 @@ impl EscrowContract {
             panic_with_error!(&e, Error::ReferralCodeNotFound);
         }
         let referrer: Address = e.storage().persistent().get(&code_key).unwrap();
+
+        if referrer == client {
+            panic_with_error!(&e, Error::SelfReferralNotAllowed);
+        }
 
         // Only link the first referrer for this client.
         let client_key = DataKey::ClientReferrer(client.clone());
@@ -7166,8 +7220,9 @@ mod test {
     #[test]
     fn referral_register_and_lookup() {
         let (env, client, _admin, user, _freelancer, native_token) = setup();
+        let referrer = Address::generate(&env);
         let code = String::from_str(&env, "MYCODE");
-        client.register_referral(&user, &code);
+        client.register_referral(&referrer, &code);
         // Posting with the referral code should link the referrer.
         let hash_val = hash(&env);
         client.add_allowed_token(&native_token);
@@ -7182,7 +7237,7 @@ mod test {
         );
         assert!(job_id >= 1);
         // Earnings should still be zero before any job completes.
-        let earnings = client.get_referral_earnings(&user);
+        let earnings = client.get_referral_earnings(&referrer);
         assert_eq!(earnings, 0);
     }
 
@@ -7295,5 +7350,252 @@ mod test {
     fn referral_withdraw_with_zero_earnings_rejected() {
         let (env, client, _admin, user, _freelancer, _native_token) = setup();
         client.withdraw_referral_earnings(&user);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #26)")]
+    fn referral_self_referral_rejected() {
+        let (env, client, _admin, user, _freelancer, native_token) = setup();
+        client.add_allowed_token(&native_token);
+        let code = String::from_str(&env, "SELFREF");
+        client.register_referral(&user, &code);
+        let hash_val = hash(&env);
+        client.post_job_with_referral(
+            &user,
+            &1_000_000i128,
+            &hash_val,
+            &32u32,
+            &0u64,
+            &native_token,
+            &code,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #9)")]
+    fn update_fee_rejects_negative() {
+        let (_env, client, _admin, _user, _freelancer, _native_token) = setup();
+        client.update_fee(&(-1i128));
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #9)")]
+    fn update_fee_rejects_excessive() {
+        let (_env, client, _admin, _user, _freelancer, _native_token) = setup();
+        client.update_fee(&(MAX_FEE_BPS + 1));
+    }
+
+    #[test]
+    fn update_fee_accepts_zero() {
+        let (_env, client, _admin, _user, _freelancer, _native_token) = setup();
+        client.update_fee(&0i128);
+        assert_eq!(client.get_fee_bps(), 0);
+    }
+
+    fn in_progress_job_with_deadline(
+        env: &Env,
+        client: &EscrowContractClient<'_>,
+        user: &Address,
+        freelancer: &Address,
+        native_token: &Address,
+    ) -> u64 {
+        let deadline = env.ledger().timestamp() + 86400;
+        let job_id = client.post_job(
+            user,
+            &1_000_000i128,
+            &hash(env),
+            &32u32,
+            &deadline,
+            native_token,
+        );
+        client.accept_job(freelancer, &job_id);
+        job_id
+    }
+
+    #[test]
+    fn extend_deadline_client_succeeds() {
+        let (env, client, _admin, user, freelancer, native_token) = setup();
+        let job_id = in_progress_job_with_deadline(&env, &client, &user, &freelancer, &native_token);
+        let job = client.get_job(&job_id);
+        let old_deadline = job.deadline;
+        let new_deadline = old_deadline + 86400;
+
+        client.extend_deadline(&user, &job_id, &new_deadline, &Option::None);
+
+        let updated = client.get_job(&job_id);
+        assert_eq!(updated.deadline, new_deadline);
+    }
+
+    #[test]
+    fn extend_deadline_with_freelancer_consent_succeeds() {
+        let (env, client, _admin, user, freelancer, native_token) = setup();
+        let job_id = in_progress_job_with_deadline(&env, &client, &user, &freelancer, &native_token);
+        let job = client.get_job(&job_id);
+        let old_deadline = job.deadline;
+        let new_deadline = old_deadline + 86400;
+
+        client.extend_deadline(
+            &user,
+            &job_id,
+            &new_deadline,
+            &Option::Some(freelancer.clone()),
+        );
+
+        let updated = client.get_job(&job_id);
+        assert_eq!(updated.deadline, new_deadline);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #14)")]
+    fn extend_deadline_rejects_past_timestamp() {
+        let (env, client, _admin, user, freelancer, native_token) = setup();
+        let job_id = in_progress_job_with_deadline(&env, &client, &user, &freelancer, &native_token);
+        let job = client.get_job(&job_id);
+        let new_deadline = env.ledger().timestamp() - 1;
+
+        client.extend_deadline(&user, &job_id, &new_deadline, &Option::None);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #14)")]
+    fn extend_deadline_rejects_earlier_deadline() {
+        let (env, client, _admin, user, freelancer, native_token) = setup();
+        let job_id = in_progress_job_with_deadline(&env, &client, &user, &freelancer, &native_token);
+        let job = client.get_job(&job_id);
+        let new_deadline = job.deadline - 1;
+
+        client.extend_deadline(&user, &job_id, &new_deadline, &Option::None);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #27)")]
+    fn extend_deadline_rejects_open_status() {
+        let (env, client, _admin, user, _freelancer, native_token) = setup();
+        let deadline = env.ledger().timestamp() + 86400;
+        let job_id = client.post_job(
+            &user,
+            &1_000_000i128,
+            &hash(&env),
+            &32u32,
+            &deadline,
+            &native_token,
+        );
+        let new_deadline = deadline + 86400;
+        client.extend_deadline(&user, &job_id, &new_deadline, &Option::None);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #27)")]
+    fn extend_deadline_rejects_completed_status() {
+        let (env, client, _admin, user, freelancer, native_token) = setup();
+        let deadline = env.ledger().timestamp() + 86400;
+        let job_id = client.post_job(
+            &user,
+            &1_000_000i128,
+            &hash(&env),
+            &32u32,
+            &deadline,
+            &native_token,
+        );
+        client.accept_job(&freelancer, &job_id);
+        client.submit_work(&freelancer, &job_id);
+        client.approve_work(&user, &job_id);
+        let new_deadline = deadline + 86400;
+        client.extend_deadline(&user, &job_id, &new_deadline, &Option::None);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #27)")]
+    fn extend_deadline_rejects_cancelled_status() {
+        let (env, client, _admin, user, _freelancer, native_token) = setup();
+        let deadline = env.ledger().timestamp() + 86400;
+        let job_id = client.post_job(
+            &user,
+            &1_000_000i128,
+            &hash(&env),
+            &32u32,
+            &deadline,
+            &native_token,
+        );
+        client.cancel_job(&user, &job_id);
+        let new_deadline = deadline + 86400;
+        client.extend_deadline(&user, &job_id, &new_deadline, &Option::None);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #27)")]
+    fn extend_deadline_rejects_no_deadline_job() {
+        let (env, client, _admin, user, freelancer, native_token) = setup();
+        let job_id = client.post_job(
+            &user,
+            &1_000_000i128,
+            &hash(&env),
+            &32u32,
+            &0u64,
+            &native_token,
+        );
+        client.accept_job(&freelancer, &job_id);
+        let new_deadline = env.ledger().timestamp() + 86400;
+        client.extend_deadline(&user, &job_id, &new_deadline, &Option::None);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #2)")]
+    fn extend_deadline_rejects_non_client() {
+        let (env, client, _admin, user, freelancer, native_token) = setup();
+        let job_id = in_progress_job_with_deadline(&env, &client, &user, &freelancer, &native_token);
+        let job = client.get_job(&job_id);
+        let new_deadline = job.deadline + 86400;
+        let stranger = Address::generate(&env);
+        client.extend_deadline(&stranger, &job_id, &new_deadline, &Option::None);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #28)")]
+    fn extend_deadline_rejects_wrong_freelancer_consent() {
+        let (env, client, _admin, user, freelancer, native_token) = setup();
+        let job_id = in_progress_job_with_deadline(&env, &client, &user, &freelancer, &native_token);
+        let job = client.get_job(&job_id);
+        let new_deadline = job.deadline + 86400;
+        let mock_freelancer = Address::generate(&env);
+        client.extend_deadline(
+            &user,
+            &job_id,
+            &new_deadline,
+            &Option::Some(mock_freelancer),
+        );
+    }
+
+    #[test]
+    fn extend_deadline_submitted_for_review_succeeds() {
+        let (env, client, _admin, user, freelancer, native_token) = setup();
+        let job_id = in_progress_job_with_deadline(&env, &client, &user, &freelancer, &native_token);
+        client.submit_work(&freelancer, &job_id);
+        let job = client.get_job(&job_id);
+        assert_eq!(job.status, JobStatus::SubmittedForReview);
+        let new_deadline = job.deadline + 86400;
+
+        client.extend_deadline(&user, &job_id, &new_deadline, &Option::None);
+
+        let updated = client.get_job(&job_id);
+        assert_eq!(updated.deadline, new_deadline);
+        assert_eq!(updated.status, JobStatus::SubmittedForReview);
+    }
+
+    #[test]
+    fn extend_deadline_event_emitted() {
+        let (env, client, _admin, user, freelancer, native_token) = setup();
+        let job_id = in_progress_job_with_deadline(&env, &client, &user, &freelancer, &native_token);
+        let job = client.get_job(&job_id);
+        let new_deadline = job.deadline + 86400;
+
+        let events_before = env.events().all().len();
+        client.extend_deadline(&user, &job_id, &new_deadline, &Option::None);
+        let events_after = env.events().all().len();
+
+        assert!(
+            events_after > events_before,
+            "extend_deadline must emit at least one event"
+        );
     }
 }

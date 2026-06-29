@@ -59,6 +59,23 @@ const STATUS_LABELS: Record<JobStatus, string> = {
   Disputed: "Disputed",
 };
 
+const BOOKMARK_STORAGE_KEY = "stellarwork:bookmarked-jobs";
+
+function loadBookmarkedIds(): number[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const stored = localStorage.getItem(BOOKMARK_STORAGE_KEY);
+    if (!stored) return [];
+    const parsed = JSON.parse(stored) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((entry) => Number(entry))
+      .filter((value) => Number.isInteger(value) && value > 0);
+  } catch {
+    return [];
+  }
+}
+
 export default function DashboardPage() {
   const { wallet, connectWallet } = useWallet();
   const { showSuccess, showError } = useToast();
@@ -70,6 +87,9 @@ export default function DashboardPage() {
   const [actionLoading, setActionLoading] = useState<number | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingDashAction | null>(null);
   const [completedJobsCount, setCompletedJobsCount] = useState<number | null>(null);
+  const [bookmarkedJobs, setBookmarkedJobs] = useState<Array<{ id: number; job: Job }>>([]);
+  const [bookmarkedLoading, setBookmarkedLoading] = useState(false);
+  const bookmarkedIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const filterOptions: Array<JobStatus | "All"> = ["All", ...STATUS_OPTIONS];
   const filterButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
@@ -105,11 +125,55 @@ export default function DashboardPage() {
       fetchJobs();
     } else {
       setAllJobs([]);
+      setBookmarkedJobs([]);
       setCompletedJobsCount(null);
       setLoading(false);
       setError(null);
     }
   }, [wallet, fetchJobs]);
+
+  useEffect(() => {
+    if (!wallet) return;
+
+    const fetchBookmarked = async () => {
+      const ids = loadBookmarkedIds();
+      if (ids.length === 0) {
+        setBookmarkedJobs([]);
+        return;
+      }
+      setBookmarkedLoading(true);
+      try {
+        const results = await Promise.all(
+          ids.map(async (id) => {
+            try {
+              const job = await getJob(String(id));
+              return job ? { id, job } : null;
+            } catch {
+              return null;
+            }
+          }),
+        );
+        setBookmarkedJobs(
+          results.filter(
+            (item): item is { id: number; job: Job } => item !== null,
+          ),
+        );
+      } catch {
+        setBookmarkedJobs([]);
+      } finally {
+        setBookmarkedLoading(false);
+      }
+    };
+
+    fetchBookmarked();
+
+    bookmarkedIntervalRef.current = setInterval(fetchBookmarked, 30000);
+    return () => {
+      if (bookmarkedIntervalRef.current) {
+        clearInterval(bookmarkedIntervalRef.current);
+      }
+    };
+  }, [wallet]);
 
   const handleAction = async (
     fn: () => Promise<unknown>,
@@ -388,6 +452,63 @@ export default function DashboardPage() {
             onRequestAction={requestDashAction}
             onClearFilter={() => setStatusFilter("All")}
           />
+
+          <div>
+            <h2 className="text-lg font-semibold">Saved Jobs</h2>
+            <p className="mb-3 text-sm text-slate-500">Jobs you bookmarked for later</p>
+            {bookmarkedLoading && bookmarkedJobs.length === 0 && (
+              <div className="grid gap-4 sm:grid-cols-2" aria-label="Loading saved jobs">
+                {Array.from({ length: 2 }).map((_, index) => (
+                  <JobCardSkeleton key={index} />
+                ))}
+              </div>
+            )}
+            {!bookmarkedLoading && bookmarkedJobs.length === 0 && (
+              <EmptyState
+                title="No saved jobs yet"
+                description="Bookmark jobs from the home page to see them here."
+              />
+            )}
+            {bookmarkedJobs.length > 0 && (
+              <ul className="grid list-none gap-4 sm:grid-cols-2" aria-label="Saved jobs">
+                {bookmarkedJobs.map(({ id, job }) => {
+                  const isOwnJob =
+                    (wallet && job.client === wallet) || job.freelancer === wallet;
+                  return (
+                    <li key={id}>
+                      <article className="interactive-card h-full p-4">
+                        <div className="flex items-start justify-between gap-2">
+                          <h3 className="font-medium">Job #{id}</h3>
+                          <StatusPill status={job.status} />
+                        </div>
+                        <div className="mt-2 space-y-1 text-sm text-slate-600">
+                          <p className="flex min-w-0 items-baseline gap-1">
+                            <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap tabular-nums">
+                              {toXlm(job.amount)}
+                            </span>
+                            <span className="shrink-0">XLM</span>
+                          </p>
+                          <p className="truncate font-mono text-xs text-slate-400">
+                            Token: {job.token ? `${job.token.slice(0, 8)}...${job.token.slice(-4)}` : "N/A"}
+                          </p>
+                          <p>
+                            {(() => {
+                              const deadline = formatDeadline(job.deadline);
+                              if (!deadline) return "Deadline: No deadline";
+                              return `Deadline: ${deadline.isPast ? "Past due" : deadline.relative} • ${deadline.exact}`;
+                            })()}
+                          </p>
+                        </div>
+                        {isOwnJob && (
+                          <p className="mt-2 text-xs text-amber-600">This is your own job</p>
+                        )}
+                      </article>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
         </>
       )}
 

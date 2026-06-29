@@ -93,6 +93,29 @@ export async function enforceDeadline(client: string, jobId: string) {
   ]);
 }
 
+export async function extendDeadline(
+  client: string,
+  jobId: string,
+  newDeadline: string,
+  freelancerConsent?: string,
+) {
+  const args = [
+    nativeToScVal(client, { type: "address" }),
+    nativeToScVal(jobId, { type: "u64" }),
+    nativeToScVal(newDeadline, { type: "u64" }),
+  ];
+  if (freelancerConsent) {
+    return callContract(requireContractId(), "extend_deadline", [
+      ...args,
+      nativeToScVal(xdr.ScVal.scvVec([nativeToScVal(freelancerConsent, { type: "address" })])),
+    ]);
+  }
+  return callContract(requireContractId(), "extend_deadline", [
+    ...args,
+    xdr.ScVal.scvVec([]),
+  ]);
+}
+
 export async function extendJobTtl(caller: string, jobId: string) {
   return callContract(requireContractId(), "extend_job_ttl", [
     nativeToScVal(caller, { type: "address" }),

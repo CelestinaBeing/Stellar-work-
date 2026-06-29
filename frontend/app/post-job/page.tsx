@@ -7,6 +7,14 @@ import RichTextEditor, { htmlToPlainText } from "@/components/RichTextEditor";
 import { getExplorerTxUrl } from "@/lib/stellar";
 import { useWallet } from "@/lib/wallet-context";
 import { useEffect, useId, useState } from "react";
+import {
+  getRateLimitStatus,
+  recordPostJob,
+  formatCooldown,
+  type RateLimitStatus,
+} from "@/lib/rate-limiter";
+
+const MIN_JOB_AMOUNT_XLM = 0.5;
 
 async function sha256Hex(input: string): Promise<string> {
   const bytes = new TextEncoder().encode(input);
@@ -19,7 +27,7 @@ async function sha256Hex(input: string): Promise<string> {
 export default function PostJobPage() {
   const { wallet, connectWallet } = useWallet();
   const [amount, setAmount] = useState("");
-  const [description, setDescription] = useState(""); // stores HTML from the rich text editor
+  const [description, setDescription] = useState("");
   const [deadline, setDeadline] = useState("");
   const descriptionLabelId = useId();
   const [tokenAddress, setTokenAddress] = useState(
@@ -37,6 +45,11 @@ export default function PostJobPage() {
     deadline?: string;
     tokenAddress?: string;
   }>({});
+  const [rateLimit, setRateLimit] = useState<RateLimitStatus>({
+    remaining: 5,
+    cooldownEndsAt: null,
+    isLimited: false,
+  });
 
   const parseAmountToStroops = (value: string): string | null => {
     const trimmed = value.trim();
@@ -66,6 +79,14 @@ export default function PostJobPage() {
       .catch(() => {
         // Keep default when contract read is unavailable.
       });
+  }, []);
+
+  useEffect(() => {
+    setRateLimit(getRateLimitStatus());
+    const interval = setInterval(() => {
+      setRateLimit(getRateLimitStatus());
+    }, 1000);
+    return () => clearInterval(interval);
   }, []);
 
   return (
@@ -102,6 +123,20 @@ export default function PostJobPage() {
             const amountStroops = parseAmountToStroops(amount);
             if (!amountStroops || BigInt(amountStroops) <= 0n) {
               nextFieldErrors.amount = "Enter a valid amount with up to 7 decimal places.";
+            } else {
+              const amountXlm = parseFloat(amount);
+              if (amountXlm < MIN_JOB_AMOUNT_XLM) {
+                nextFieldErrors.amount = `Minimum job amount is ${MIN_JOB_AMOUNT_XLM} XLM to prevent dust spam.`;
+              }
+            }
+
+            const limitStatus = getRateLimitStatus();
+            if (limitStatus.isLimited) {
+              setError(
+                `Rate limit reached. You can post at most 5 jobs per hour. Try again in ${formatCooldown(limitStatus.cooldownEndsAt!)}.`,
+              );
+              setRateLimit(limitStatus);
+              return;
             }
             const plainDescription = htmlToPlainText(description);
             const descriptionBytes = new TextEncoder().encode(plainDescription).length;
@@ -161,6 +196,8 @@ export default function PostJobPage() {
             if (result.hash) {
               setTxHash(result.hash);
             }
+            recordPostJob();
+            setRateLimit(getRateLimitStatus());
             const jobId = typeof result === "number" || typeof result === "string" ? result : null;
             const successMessage =
               jobId != null ? `Job #${jobId} created successfully.` : "Job submitted to contract.";
@@ -216,7 +253,7 @@ export default function PostJobPage() {
             required
           />
           <p id="post-job-amount-helper" className="mt-1 text-xs text-slate-500">
-            Enter amount in XLM with up to 7 decimal places (e.g., 10.5 or 0.0000001)
+            Enter amount in XLM with up to 7 decimal places (e.g., 10.5 or 0.0000001). Minimum: {MIN_JOB_AMOUNT_XLM} XLM.
           </p>
           {fieldErrors.amount && (
             <p id="post-job-amount-error" className="mt-1 text-xs text-red-600">
@@ -291,10 +328,22 @@ export default function PostJobPage() {
           )}
         </label>
 
+        {rateLimit.cooldownEndsAt && (
+          <div
+            className="rounded-md bg-blue-50 p-3 text-sm text-blue-700"
+            role="status"
+            aria-live="polite"
+          >
+            {rateLimit.isLimited
+              ? `Rate limit: You can post again in ${formatCooldown(rateLimit.cooldownEndsAt)}`
+              : `${rateLimit.remaining} job post${rateLimit.remaining === 1 ? "" : "s"} remaining this hour`}
+          </div>
+        )}
+
         <button
           type="submit"
           className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={submitting}
+          disabled={submitting || rateLimit.isLimited}
           aria-busy={submitting}
         >
           {submitting ? "Posting..." : "Post Job"}
