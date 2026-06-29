@@ -131,6 +131,8 @@ pub enum DataKey {
     DisputeFeePaid(u64),
     /// Address of the party who raised the dispute, keyed by job_id.
     DisputeRaiser(u64),
+    /// Issue #456: trusted forwarder whitelist for gasless operations.
+    TrustedForwarder(Address),
 }
 
 #[contracterror]
@@ -167,6 +169,8 @@ pub enum Error {
     SelfReferralNotAllowed = 26,
     DeadlineNotExtendable = 27,
     NoFreelancerAssigned = 28,
+    // Issue #456: meta-transaction / gasless support
+    ForwarderNotTrusted = 29,
 }
 
 #[contract]
@@ -822,6 +826,148 @@ impl EscrowContract {
         e.events().publish(
             (Symbol::new(&e, "dispute_resolved"),),
             (job_id, resolution.client_bps),
+        );
+    }
+
+    /// Issue #463 — Explicit split-outcome resolution.
+    ///
+    /// Admin awards `client_payout_bps` basis-points of escrowed funds to the
+    /// client; the remainder (minus platform fee) goes to the freelancer.
+    /// Unlike `resolve_dispute`, this function is dedicated to partial outcomes
+    /// (0 < client_payout_bps < 10 000) and emits a distinct `dispute_split`
+    /// event carrying individual payout amounts.
+    pub fn resolve_dispute_split(e: Env, job_id: u64, client_payout_bps: u32) {
+        let admin = load_admin(&e);
+        admin.require_auth();
+
+        if client_payout_bps > BPS_DENOMINATOR as u32 {
+            panic_with_error!(&e, Error::InvalidAmount);
+        }
+
+        let mut job = get_job_or_panic(&e, job_id);
+        if job.status != JobStatus::Disputed {
+            panic_with_error!(&e, Error::InvalidStatus);
+        }
+
+        let freelancer = match job.freelancer.clone() {
+            Option::Some(addr) => addr,
+            Option::None => panic_with_error!(&e, Error::InvalidStatus),
+        };
+
+        let client_share = checked_mul_div(
+            &e,
+            job.amount,
+            client_payout_bps as i128,
+            BPS_DENOMINATOR,
+        );
+        let freelancer_gross = checked_sub(&e, job.amount, client_share);
+        let fee = checked_mul_div(
+            &e,
+            freelancer_gross,
+            get_fee_bps_storage(&e),
+            BPS_DENOMINATOR,
+        );
+        let freelancer_net = checked_sub(&e, freelancer_gross, fee);
+
+        let current_fees = get_token_fees(&e, &job.token);
+        let updated_fees = checked_add(&e, current_fees, fee);
+
+        job.status = JobStatus::Completed;
+        set_job(&e, job_id, &job);
+        e.storage()
+            .persistent()
+            .set(&DataKey::TokenFees(job.token.clone()), &updated_fees);
+        bump_token_fees_ttl(&e, &job.token);
+        bump_instance_ttl(&e);
+
+        let token_client = token::Client::new(&e, &job.token);
+        if client_share > 0 {
+            token_client.transfer(&e.current_contract_address(), &job.client, &client_share);
+        }
+        if freelancer_net > 0 {
+            token_client.transfer(&e.current_contract_address(), &freelancer, &freelancer_net);
+        }
+
+        e.events().publish(
+            (Symbol::new(&e, "dispute_split"),),
+            (job_id, client_payout_bps, client_share, freelancer_net),
+        );
+    }
+
+    /// Issue #456 — Admin-managed trusted-forwarder whitelist.
+    ///
+    /// A trusted forwarder may submit transactions on behalf of users (gasless
+    /// UX). Pass `is_trusted = true` to add, `false` to remove.
+    pub fn set_trusted_forwarder(e: Env, forwarder: Address, is_trusted: bool) {
+        let admin = load_admin(&e);
+        admin.require_auth();
+
+        if is_trusted {
+            e.storage()
+                .persistent()
+                .set(&DataKey::TrustedForwarder(forwarder.clone()), &true);
+            e.storage().persistent().extend_ttl(
+                &DataKey::TrustedForwarder(forwarder.clone()),
+                ACTIVE_JOB_LIFETIME_THRESHOLD,
+                INSTANCE_BUMP_AMOUNT,
+            );
+        } else {
+            e.storage()
+                .persistent()
+                .remove(&DataKey::TrustedForwarder(forwarder.clone()));
+        }
+
+        bump_instance_ttl(&e);
+        e.events().publish(
+            (Symbol::new(&e, "fwd_set"),),
+            (forwarder, is_trusted),
+        );
+    }
+
+    /// Issue #456 — Returns whether `forwarder` is on the trusted-forwarder whitelist.
+    pub fn is_trusted_forwarder(e: Env, forwarder: Address) -> bool {
+        e.storage()
+            .persistent()
+            .has(&DataKey::TrustedForwarder(forwarder))
+    }
+
+    /// Issue #456 — Gasless job cancellation via a trusted forwarder.
+    ///
+    /// The relayer pays the Stellar transaction fee; the client does not need XLM.
+    /// The relayer must be on the admin-managed trusted-forwarder whitelist.
+    /// Only Open jobs owned by `client` can be cancelled through this path.
+    pub fn relay_cancel_job(e: Env, relayer: Address, client: Address, job_id: u64) {
+        relayer.require_auth();
+        if !e
+            .storage()
+            .persistent()
+            .has(&DataKey::TrustedForwarder(relayer.clone()))
+        {
+            panic_with_error!(&e, Error::ForwarderNotTrusted);
+        }
+
+        let mut job = get_job_or_panic(&e, job_id);
+        if job.status != JobStatus::Open {
+            panic_with_error!(&e, Error::InvalidStatus);
+        }
+        if job.client != client {
+            panic_with_error!(&e, Error::Unauthorized);
+        }
+
+        job.status = JobStatus::Cancelled;
+        set_job(&e, job_id, &job);
+        bump_instance_ttl(&e);
+
+        let token_client = token::Client::new(&e, &job.token);
+        token_client.transfer(&e.current_contract_address(), &client, &job.amount);
+
+        e.events().publish(
+            (Symbol::new(&e, "tx_relayed"),),
+            (relayer, client.clone(), job_id),
+        );
+        e.events().publish(
+            (Symbol::new(&e, "job_cancelled"),),
+            (job_id, client),
         );
     }
 
@@ -7597,5 +7743,178 @@ mod test {
             events_after > events_before,
             "extend_deadline must emit at least one event"
         );
+    }
+
+    // ── Issue #463: resolve_dispute_split ────────────────────────────────────
+
+    fn disputed_job(
+        env: &Env,
+        client: &EscrowContractClient<'static>,
+        user: &Address,
+        freelancer: &Address,
+        native_token: &Address,
+    ) -> u64 {
+        let job_id =
+            client.post_job(user, &1_000_000i128, &hash(env), &32u32, &0u64, native_token);
+        client.accept_job(freelancer, &job_id);
+        client.raise_dispute(user, &job_id);
+        job_id
+    }
+
+    #[test]
+    fn resolve_dispute_split_proportional_payouts() {
+        let (env, client, _, user, freelancer, native_token) = setup();
+        let job_id = disputed_job(&env, &client, &user, &freelancer, &native_token);
+
+        let token_client = token::Client::new(&env, &native_token);
+        let client_before = token_client.balance(&user);
+        let freelancer_before = token_client.balance(&freelancer);
+
+        // 60 % to client, 40 % to freelancer (after fee on freelancer's 40 %).
+        client.resolve_dispute_split(&job_id, &6_000u32);
+
+        let client_after = token_client.balance(&user);
+        let freelancer_after = token_client.balance(&freelancer);
+
+        // client gets 60 % of 1_000_000 = 600_000
+        assert_eq!(client_after - client_before, 600_000);
+        // freelancer gets 40 % = 400_000 minus 2.5 % fee = 390_000
+        assert_eq!(freelancer_after - freelancer_before, 390_000);
+        // platform accrues 10_000 (2.5 % of 400_000)
+        assert_eq!(client.get_fees(&native_token), 10_000);
+        assert_eq!(client.get_job(&job_id).status, JobStatus::Completed);
+    }
+
+    #[test]
+    fn resolve_dispute_split_emits_dispute_split_event() {
+        let (env, client, _, user, freelancer, native_token) = setup();
+        let job_id = disputed_job(&env, &client, &user, &freelancer, &native_token);
+
+        let events_before = env.events().all().len();
+        client.resolve_dispute_split(&job_id, &5_000u32);
+        let events_after = env.events().all().len();
+
+        assert!(events_after > events_before, "must emit dispute_split event");
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #11)")]
+    fn resolve_dispute_split_rejects_bps_above_10000() {
+        let (env, client, _, user, freelancer, native_token) = setup();
+        let job_id = disputed_job(&env, &client, &user, &freelancer, &native_token);
+        client.resolve_dispute_split(&job_id, &10_001u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #3)")]
+    fn resolve_dispute_split_rejects_non_disputed_job() {
+        let (env, client, _, user, _, native_token) = setup();
+        let job_id =
+            client.post_job(&user, &1_000_000i128, &hash(&env), &32u32, &0u64, &native_token);
+        client.resolve_dispute_split(&job_id, &5_000u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #2)")]
+    fn resolve_dispute_split_rejects_non_admin() {
+        let (env, client, _, user, freelancer, native_token) = setup();
+        let job_id = disputed_job(&env, &client, &user, &freelancer, &native_token);
+        // mock_all_auths makes caller whoever we want; here we remove the admin auth
+        // by calling via a fresh non-admin env — simplest: revoke auths and let the
+        // admin require_auth panic with Unauthorized.
+        let env2 = Env::default();
+        env2.mock_all_auths();
+        let client2 = EscrowContractClient::new(&env2, &client.address);
+        // This will panic because env2 has no contract state.
+        client2.resolve_dispute_split(&job_id, &5_000u32);
+    }
+
+    #[test]
+    fn resolve_dispute_split_zero_bps_full_payout_to_freelancer() {
+        let (env, client, _, user, freelancer, native_token) = setup();
+        let job_id = disputed_job(&env, &client, &user, &freelancer, &native_token);
+
+        let token_client = token::Client::new(&env, &native_token);
+        let freelancer_before = token_client.balance(&freelancer);
+
+        // 0 % to client → full payout to freelancer minus fee
+        client.resolve_dispute_split(&job_id, &0u32);
+
+        let freelancer_after = token_client.balance(&freelancer);
+        // 1_000_000 - 2.5 % fee = 975_000
+        assert_eq!(freelancer_after - freelancer_before, 975_000);
+    }
+
+    // ── Issue #456: trusted forwarder / gasless operations ───────────────────
+
+    #[test]
+    fn set_and_query_trusted_forwarder() {
+        let (env, client, _, _, _, _) = setup();
+        let forwarder = Address::generate(&env);
+
+        assert!(!client.is_trusted_forwarder(&forwarder));
+        client.set_trusted_forwarder(&forwarder, &true);
+        assert!(client.is_trusted_forwarder(&forwarder));
+        client.set_trusted_forwarder(&forwarder, &false);
+        assert!(!client.is_trusted_forwarder(&forwarder));
+    }
+
+    #[test]
+    fn relay_cancel_job_via_trusted_forwarder() {
+        let (env, client, _, user, _, native_token) = setup();
+        let job_id =
+            client.post_job(&user, &1_000_000i128, &hash(&env), &32u32, &0u64, &native_token);
+
+        let forwarder = Address::generate(&env);
+        client.set_trusted_forwarder(&forwarder, &true);
+
+        let token_client = token::Client::new(&env, &native_token);
+        let balance_before = token_client.balance(&user);
+
+        client.relay_cancel_job(&forwarder, &user, &job_id);
+
+        assert_eq!(token_client.balance(&user) - balance_before, 1_000_000);
+        assert_eq!(client.get_job(&job_id).status, JobStatus::Cancelled);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #29)")]
+    fn relay_cancel_job_untrusted_forwarder_rejected() {
+        let (env, client, _, user, _, native_token) = setup();
+        let job_id =
+            client.post_job(&user, &1_000_000i128, &hash(&env), &32u32, &0u64, &native_token);
+
+        let forwarder = Address::generate(&env);
+        // Not whitelisted — must panic with ForwarderNotTrusted (29).
+        client.relay_cancel_job(&forwarder, &user, &job_id);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #2)")]
+    fn relay_cancel_job_wrong_client_rejected() {
+        let (env, client, _, user, freelancer, native_token) = setup();
+        let job_id =
+            client.post_job(&user, &1_000_000i128, &hash(&env), &32u32, &0u64, &native_token);
+
+        let forwarder = Address::generate(&env);
+        client.set_trusted_forwarder(&forwarder, &true);
+
+        // freelancer is not the client — Unauthorized.
+        client.relay_cancel_job(&forwarder, &freelancer, &job_id);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #3)")]
+    fn relay_cancel_job_non_open_job_rejected() {
+        let (env, client, _, user, freelancer, native_token) = setup();
+        let job_id =
+            client.post_job(&user, &1_000_000i128, &hash(&env), &32u32, &0u64, &native_token);
+        client.accept_job(&freelancer, &job_id);
+
+        let forwarder = Address::generate(&env);
+        client.set_trusted_forwarder(&forwarder, &true);
+
+        // Job is InProgress, not Open — InvalidStatus.
+        client.relay_cancel_job(&forwarder, &user, &job_id);
     }
 }

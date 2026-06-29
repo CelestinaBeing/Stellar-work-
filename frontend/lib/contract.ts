@@ -426,3 +426,37 @@ export async function isWhitelisted(address: string): Promise<boolean> {
   return Boolean(response.data ?? false);
 }
 
+// Issue #463 — Partial split dispute resolution
+export async function resolveDisputeSplit(jobId: string, clientPayoutBps: number) {
+  return callContract(requireContractId(), "resolve_dispute_split", [
+    nativeToScVal(jobId, { type: "u64" }),
+    nativeToScVal(String(clientPayoutBps), { type: "u32" }),
+  ]);
+}
+
+// Issue #456 — Trusted forwarder / gasless operations
+export async function setTrustedForwarder(forwarder: string, isTrusted: boolean) {
+  return callContract(requireContractId(), "set_trusted_forwarder", [
+    nativeToScVal(forwarder, { type: "address" }),
+    nativeToScVal(isTrusted, { type: "bool" }),
+  ]);
+}
+
+export async function isTrustedForwarder(forwarder: string): Promise<boolean> {
+  const response = await callContract(
+    requireContractId(),
+    "is_trusted_forwarder",
+    [nativeToScVal(forwarder, { type: "address" })],
+    { readOnly: true },
+  );
+  return Boolean(response.data ?? false);
+}
+
+export async function relayCancelJob(relayer: string, client: string, jobId: string) {
+  return callContract(requireContractId(), "relay_cancel_job", [
+    nativeToScVal(relayer, { type: "address" }),
+    nativeToScVal(client, { type: "address" }),
+    nativeToScVal(jobId, { type: "u64" }),
+  ]);
+}
+
