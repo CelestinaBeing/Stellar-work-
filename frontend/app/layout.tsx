@@ -14,7 +14,7 @@ import CommandPalette from "@/components/CommandPalette";
 import OnboardingProvider from "@/components/OnboardingProvider";
 import AnnouncementBanner from "@/components/AnnouncementBanner";
 import JsonLd from "@/components/JsonLd";
-import Link from "next/link";
+import AppFooter from "@/components/AppFooter";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -145,30 +145,7 @@ export default async function RootLayout({
           <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-5xl flex-1 px-3 py-6 sm:px-4 sm:py-8">
             <ErrorBoundary>{children}</ErrorBoundary>
           </main>
-          <footer className="mt-auto border-t border-slate-200 bg-white py-8 pb-[calc(2rem+env(safe-area-inset-bottom))] dark:border-slate-800 dark:bg-slate-900">
-            <div className="mx-auto max-w-5xl px-4">
-              <div className="flex flex-col items-center justify-between gap-6 md:flex-row">
-                <div className="flex flex-col items-center gap-2 md:items-start">
-                  <span className="text-lg font-bold text-slate-900 dark:text-slate-100">StellarWork</span>
-                  <p className="text-sm text-slate-500 dark:text-slate-400">Decentralized Escrow Marketplace</p>
-                </div>
-
-                <nav className="flex flex-wrap justify-center gap-8 text-sm font-medium text-slate-600 dark:text-slate-400">
-                  <a href="https://github.com/anumukul/Stellar-work-" target="_blank" rel="noopener noreferrer" className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors">GitHub</a>
-                  <Link href="/docs" className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors">Documentation</Link>
-                  <a href="/LICENSE" target="_blank" rel="noopener noreferrer" className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors">License</a>
-                </nav>
-
-                <div className="flex items-center gap-2 rounded-full bg-slate-50 px-4 py-2 border border-slate-100 dark:bg-slate-800 dark:border-slate-700">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Built on</span>
-                  <span className="text-sm font-bold text-slate-800 dark:text-slate-200">Stellar</span>
-                </div>
-              </div>
-              <div className="mt-8 border-t border-slate-100 pt-8 text-center text-xs text-slate-400 dark:border-slate-800 dark:text-slate-500">
-                &copy; {new Date().getFullYear()} StellarWork. All rights reserved.
-              </div>
-            </div>
-          </footer>
+          <AppFooter />
           </ToastProvider>
           </MessagingProvider>
           </NotificationProvider>
