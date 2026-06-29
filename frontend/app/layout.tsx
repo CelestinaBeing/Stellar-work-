@@ -13,6 +13,7 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import CommandPalette from "@/components/CommandPalette";
 import OnboardingProvider from "@/components/OnboardingProvider";
 import AnnouncementBanner from "@/components/AnnouncementBanner";
+import JsonLd from "@/components/JsonLd";
 import Link from "next/link";
 import "./globals.css";
 
@@ -32,9 +33,66 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
+const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://stellarwork.app";
+
 export const metadata: Metadata = {
-  title: "StellarWork",
-  description: "Decentralized escrow freelance marketplace on Stellar",
+  metadataBase: new URL(BASE_URL),
+  title: {
+    default: "StellarWork — Decentralized Freelance Marketplace on Stellar",
+    template: "%s | StellarWork",
+  },
+  description:
+    "StellarWork is a decentralized escrow freelance marketplace built on Stellar. Find jobs, hire talent, and get paid trustlessly with smart-contract escrow.",
+  keywords: [
+    "freelance",
+    "Stellar",
+    "blockchain",
+    "escrow",
+    "decentralized",
+    "crypto jobs",
+    "smart contracts",
+    "Web3 freelance",
+  ],
+  authors: [{ name: "StellarWork" }],
+  creator: "StellarWork",
+  openGraph: {
+    type: "website",
+    locale: "en_US",
+    url: BASE_URL,
+    siteName: "StellarWork",
+    title: "StellarWork — Decentralized Freelance Marketplace on Stellar",
+    description:
+      "Hire or work as a freelancer with trustless smart-contract escrow on the Stellar network.",
+    images: [
+      {
+        url: "/og-default.png",
+        width: 1200,
+        height: 630,
+        alt: "StellarWork — Decentralized Freelance Marketplace",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "StellarWork — Decentralized Freelance Marketplace on Stellar",
+    description:
+      "Hire or work as a freelancer with trustless smart-contract escrow on the Stellar network.",
+    images: ["/og-default.png"],
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-video-preview": -1,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+    },
+  },
+  alternates: {
+    canonical: BASE_URL,
+  },
 };
 
 export default async function RootLayout({
@@ -52,6 +110,21 @@ export default async function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+        <JsonLd
+          data={{
+            "@context": "https://schema.org",
+            "@type": "WebSite",
+            name: "StellarWork",
+            url: BASE_URL,
+            description:
+              "Decentralized escrow freelance marketplace built on the Stellar network.",
+            potentialAction: {
+              "@type": "SearchAction",
+              target: `${BASE_URL}/?q={search_term_string}`,
+              "query-input": "required name=search_term_string",
+            },
+          }}
+        />
         <NextIntlClientProvider messages={messages} locale={locale}>
         <ThemeProvider>
         <WalletProvider>

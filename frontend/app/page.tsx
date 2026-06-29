@@ -26,6 +26,7 @@ import {
 import {
   clearRecentSearches,
   loadRecentSearches,
+  removeRecentSearch,
   saveRecentSearches,
   updateRecentSearches,
 } from "@/lib/recent-searches";
@@ -65,6 +66,7 @@ export default function HomePage() {
   const [animatingBookmarkId, setAnimatingBookmarkId] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [recentSearches, setRecentSearches] = useState<string[] | null>(null);
+  const [recentSearchesOpen, setRecentSearchesOpen] = useState(false);
   const [resultsAnnouncement, setResultsAnnouncement] = useState("");
   const [lastAnnouncedSignature, setLastAnnouncedSignature] = useState("");
   const [newJobIds, setNewJobIds] = useState<Set<number>>(() => new Set());
@@ -347,13 +349,19 @@ export default function HomePage() {
     const term = searchTerm.trim();
     if (!term) return;
     setRecentSearches((current) => updateRecentSearches(current ?? [], term));
+    setRecentSearchesOpen(false);
     setPage(1);
   };
 
   const handleRecentSearchSelect = (term: string) => {
     setSearchTerm(term);
     setRecentSearches((current) => updateRecentSearches(current ?? [], term));
+    setRecentSearchesOpen(false);
     setPage(1);
+  };
+
+  const handleRemoveRecentSearch = (term: string) => {
+    setRecentSearches((current) => removeRecentSearch(current ?? [], term));
   };
 
   const handleClearSearch = () => {
@@ -363,6 +371,7 @@ export default function HomePage() {
 
   const handleClearSearchHistory = () => {
     setRecentSearches([]);
+    setRecentSearchesOpen(false);
     clearRecentSearches();
   };
 
@@ -525,19 +534,88 @@ export default function HomePage() {
         </div>
         <form onSubmit={handleSearchSubmit} className="space-y-3 rounded-md border border-slate-200 p-3">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
-            <label className="flex-1 text-sm text-slate-600">
-              <span className="block font-medium text-slate-700">Search jobs</span>
+            <div
+              className="relative flex-1 text-sm text-slate-600"
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  setRecentSearchesOpen(false);
+                }
+              }}
+            >
+              <label htmlFor="job-search" className="block font-medium text-slate-700">
+                Search jobs
+              </label>
               <input
+                id="job-search"
                 type="search"
                 value={searchTerm}
                 onChange={(event) => {
                   setSearchTerm(event.target.value);
                   setPage(1);
                 }}
+                onFocus={() => setRecentSearchesOpen((recentSearches?.length ?? 0) > 0)}
                 placeholder="Search by ID, description, wallet, or amount"
                 className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2"
+                aria-controls="recent-searches-listbox"
+                aria-expanded={recentSearchesOpen}
+                aria-haspopup="listbox"
               />
-            </label>
+              {recentSearchesOpen && (recentSearches?.length ?? 0) > 0 && (
+                <div className="absolute z-20 mt-2 w-full rounded-md border border-slate-200 bg-white p-2 shadow-lg">
+                  <div
+                    id="recent-searches-listbox"
+                    role="listbox"
+                    aria-label="Recent searches"
+                    className="space-y-1"
+                  >
+                    {(recentSearches ?? []).map((term) => (
+                      <div
+                        key={term}
+                        role="option"
+                        aria-selected={searchTerm.trim().toLowerCase() === term.toLowerCase()}
+                        className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => handleRecentSearchSelect(term)}
+                          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                        >
+                                                    <svg
+                            aria-hidden="true"
+                            viewBox="0 0 24 24"
+                            className="h-4 w-4 shrink-0 text-slate-400"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <circle cx="12" cy="12" r="9" />
+                            <path d="M12 7v5l3 2" />
+                          </svg>
+                          <span className="truncate">{term}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveRecentSearch(term)}
+                          className="rounded px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                          aria-label={`Remove ${term} from recent searches`}
+                        >
+                          X
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleClearSearchHistory}
+                    className="mt-2 w-full border-t border-slate-100 pt-2 text-left text-xs font-medium text-slate-600 hover:text-slate-900"
+                  >
+                    Clear history
+                  </button>
+                </div>
+              )}
+            </div>
             <div className="flex flex-wrap gap-2">
               <button
                 type="submit"
@@ -556,38 +634,6 @@ export default function HomePage() {
               </button>
             </div>
           </div>
-          {(recentSearches?.length ?? 0) > 0 && (
-            <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                  Recent searches
-                </p>
-                <button
-                  type="button"
-                  onClick={handleClearSearchHistory}
-                  className="text-xs font-medium text-slate-600 hover:text-slate-900"
-                >
-                  Clear history
-                </button>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {(recentSearches ?? []).map((term) => (
-                  <button
-                    key={term}
-                    type="button"
-                    onClick={() => handleRecentSearchSelect(term)}
-                    className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-                      searchTerm.trim().toLowerCase() === term.toLowerCase()
-                        ? "border-slate-900 bg-slate-900 text-white"
-                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-                    }`}
-                  >
-                    {term}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </form>
 
         <fieldset className="space-y-3 rounded-md border border-slate-200 p-3">
