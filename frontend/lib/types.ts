@@ -16,6 +16,7 @@ export interface Job {
   deadline: string;
   token: string;
   revision_count: number;
+  submitted_at: string;
 }
 
 /** A single milestone within a milestone-based job. */

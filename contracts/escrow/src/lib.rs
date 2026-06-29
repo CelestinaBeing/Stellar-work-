@@ -24,6 +24,7 @@ const DEFAULT_DISPUTE_FEE: i128 = 50_000_000;
 const MAX_MILESTONES: u32 = 20;
 /// Maximum number of disputes that can be resolved in a single batch call.
 const MAX_BATCH_DISPUTES: u32 = 20;
+const DEFAULT_APPROVAL_WINDOW: u64 = 14 * 24 * 60 * 60;
 
 const INSTANCE_LIFETIME_THRESHOLD: u32 = 17_280;
 const INSTANCE_BUMP_AMOUNT: u32 = 518_400;
@@ -54,6 +55,7 @@ pub struct Job {
     pub deadline: u64,
     pub token: Address,
     pub revision_count: u32,
+    pub submitted_at: u64,
 }
 
 /// A single milestone within a milestone-based job.
@@ -156,6 +158,8 @@ pub enum DataKey {
     // Issue #460: two-step ownership transfer
     /// Address nominated to become the next admin (cleared on accept or cancel).
     PendingAdmin,
+    /// Configurable approval window in seconds for automatic payment release.
+    ApprovalWindow,
 }
 
 #[contracterror]
@@ -286,6 +290,7 @@ impl EscrowContract {
             deadline,
             token: job_token,
             revision_count: 0,
+            submitted_at: 0,
         };
 
         set_job(&e, job_id, &job);
@@ -348,6 +353,7 @@ impl EscrowContract {
         }
 
         job.status = JobStatus::SubmittedForReview;
+        job.submitted_at = e.ledger().timestamp();
         set_job(&e, job_id, &job);
         bump_instance_ttl(&e);
 
@@ -372,82 +378,37 @@ impl EscrowContract {
             Option::None => panic_with_error!(&e, Error::InvalidStatus),
         };
 
-        // Check if client or freelancer is fee-exempted
-        let client_exempted = is_fee_exempted(&e, job.client.clone());
-        let freelancer_exempted = is_fee_exempted(&e, freelancer.clone());
-        let fee_exempted = client_exempted || freelancer_exempted;
-
-        let (fee, payout) = if fee_exempted {
-            (0i128, job.amount)
-        } else {
-            let fee_bps = calculate_fee_for_amount(&e, job.amount);
-            let calculated_fee = checked_mul_div(&e, job.amount, fee_bps, BPS_DENOMINATOR);
-            let calculated_payout = checked_sub(&e, job.amount, calculated_fee);
-            (calculated_fee, calculated_payout)
-        };
-
-        let current_fees = get_token_fees(&e, &job.token);
-        let updated_fees = checked_add(&e, current_fees, fee);
-
-        job.status = JobStatus::Completed;
-        set_job(&e, job_id, &job);
-        e.storage()
-            .persistent()
-            .set(&DataKey::TokenFees(job.token.clone()), &updated_fees);
-        bump_token_fees_ttl(&e, &job.token);
-        bump_instance_ttl(&e);
-
-        let token_client = token::Client::new(&e, &job.token);
-        token_client.transfer(&e.current_contract_address(), &freelancer, &payout);
-
-        // Issue #412: credit 0.5% referral bonus on the client's first completed job.
-        let bonus_paid_key = DataKey::ReferralBonusPaid(job.client.clone());
-        let already_paid: bool = e
-            .storage()
-            .persistent()
-            .get(&bonus_paid_key)
-            .unwrap_or(false);
-        if !already_paid {
-            let client_ref_key = DataKey::ClientReferrer(job.client.clone());
-            if let Some(referrer) = e
-                .storage()
-                .persistent()
-                .get::<DataKey, Address>(&client_ref_key)
-            {
-                // 0.5% of job amount (50 basis points)
-                const REFERRAL_BPS: i128 = 50;
-                let bonus = checked_mul_div(&e, job.amount, REFERRAL_BPS, BPS_DENOMINATOR);
-                let earnings_key = DataKey::ReferralEarnings(referrer.clone());
-                let prev: i128 = e
-                    .storage()
-                    .persistent()
-                    .get(&earnings_key)
-                    .unwrap_or(0i128);
-                e.storage()
-                    .persistent()
-                    .set(&earnings_key, &checked_add(&e, prev, bonus));
-                e.storage().persistent().extend_ttl(
-                    &earnings_key,
-                    INSTANCE_LIFETIME_THRESHOLD,
-                    INSTANCE_BUMP_AMOUNT,
-                );
-                // Mark bonus as paid so subsequent jobs don't trigger it again.
-                e.storage().persistent().set(&bonus_paid_key, &true);
-                e.storage().persistent().extend_ttl(
-                    &bonus_paid_key,
-                    INSTANCE_LIFETIME_THRESHOLD,
-                    INSTANCE_BUMP_AMOUNT,
-                );
-                e.events().publish(
-                    (Symbol::new(&e, "referral_bonus_credited"),),
-                    (referrer, job.client.clone(), bonus),
-                );
-            }
-        }
+        let payout = complete_job_and_payout(&e, job_id, &mut job, freelancer.clone());
 
         e.events().publish(
             (Symbol::new(&e, "job_approved"),),
             (job_id, client, freelancer, payout),
+        );
+    }
+
+    pub fn auto_approve(e: Env, freelancer: Address, job_id: u64) {
+        let mut job = get_job_or_panic(&e, job_id);
+        freelancer.require_auth();
+        require_active_access(&e, &freelancer);
+
+        if job.status != JobStatus::SubmittedForReview {
+            panic_with_error!(&e, Error::InvalidStatus);
+        }
+        if job.freelancer != Option::Some(freelancer.clone()) {
+            panic_with_error!(&e, Error::Unauthorized);
+        }
+
+        let window = get_approval_window_storage(&e);
+        let time_passed = e.ledger().timestamp() > job.submitted_at.checked_add(window).unwrap_or(u64::MAX);
+        if !time_passed {
+            panic_with_error!(&e, Error::DeadlineNotExpired);
+        }
+
+        let payout = complete_job_and_payout(&e, job_id, &mut job, freelancer.clone());
+
+        e.events().publish(
+            (Symbol::new(&e, "payment_auto_approved"),),
+            (job_id, freelancer, payout),
         );
     }
 
@@ -468,6 +429,7 @@ impl EscrowContract {
 
         job.status = JobStatus::InProgress;
         job.revision_count += 1;
+        job.submitted_at = 0;
         set_job(&e, job_id, &job);
         bump_instance_ttl(&e);
 
@@ -475,6 +437,24 @@ impl EscrowContract {
             (Symbol::new(&e, "job_rejected"),),
             (job_id, client, job.revision_count),
         );
+    }
+
+    pub fn update_approval_window(e: Env, admin: Address, new_window: u64) {
+        admin.require_auth();
+        let stored_admin = load_admin(&e);
+        if admin != stored_admin {
+            panic_with_error!(&e, Error::UnauthorizedAdmin);
+        }
+        e.storage().instance().set(&DataKey::ApprovalWindow, &new_window);
+        bump_instance_ttl(&e);
+        e.events().publish(
+            (Symbol::new(&e, "approval_window_updated"),),
+            (new_window,),
+        );
+    }
+
+    pub fn get_approval_window(e: Env) -> u64 {
+        get_approval_window_storage(&e)
     }
 
     pub fn cancel_job(e: Env, client: Address, job_id: u64) {
@@ -1932,6 +1912,85 @@ fn get_dispute_fee_storage(e: &Env) -> i128 {
         .instance()
         .get::<DataKey, i128>(&DataKey::DisputeFee)
         .unwrap_or(DEFAULT_DISPUTE_FEE)
+}
+
+fn get_approval_window_storage(e: &Env) -> u64 {
+    e.storage()
+        .instance()
+        .get::<DataKey, u64>(&DataKey::ApprovalWindow)
+        .unwrap_or(DEFAULT_APPROVAL_WINDOW)
+}
+
+fn complete_job_and_payout(e: &Env, job_id: u64, job: &mut Job, freelancer: Address) -> i128 {
+    let client_exempted = e.storage().persistent().get(&DataKey::FeeExempted(job.client.clone())).unwrap_or(false);
+    let freelancer_exempted = e.storage().persistent().get(&DataKey::FeeExempted(freelancer.clone())).unwrap_or(false);
+    let fee_exempted = client_exempted || freelancer_exempted;
+
+    let (fee, payout) = if fee_exempted {
+        (0i128, job.amount)
+    } else {
+        let fee_bps = calculate_fee_for_amount(e, job.amount);
+        let calculated_fee = checked_mul_div(e, job.amount, fee_bps, BPS_DENOMINATOR);
+        let calculated_payout = checked_sub(e, job.amount, calculated_fee);
+        (calculated_fee, calculated_payout)
+    };
+
+    let current_fees = get_token_fees(e, &job.token);
+    let updated_fees = checked_add(e, current_fees, fee);
+
+    job.status = JobStatus::Completed;
+    set_job(e, job_id, job);
+    e.storage()
+        .persistent()
+        .set(&DataKey::TokenFees(job.token.clone()), &updated_fees);
+    bump_token_fees_ttl(e, &job.token);
+    bump_instance_ttl(e);
+
+    let token_client = token::Client::new(e, &job.token);
+    token_client.transfer(&e.current_contract_address(), &freelancer, &payout);
+
+    let bonus_paid_key = DataKey::ReferralBonusPaid(job.client.clone());
+    let already_paid: bool = e
+        .storage()
+        .persistent()
+        .get(&bonus_paid_key)
+        .unwrap_or(false);
+    if !already_paid {
+        let client_ref_key = DataKey::ClientReferrer(job.client.clone());
+        if let Some(referrer) = e
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&client_ref_key)
+        {
+            const REFERRAL_BPS: i128 = 50;
+            let bonus = checked_mul_div(e, job.amount, REFERRAL_BPS, BPS_DENOMINATOR);
+            let earnings_key = DataKey::ReferralEarnings(referrer.clone());
+            let prev: i128 = e
+                .storage()
+                .persistent()
+                .get(&earnings_key)
+                .unwrap_or(0i128);
+            e.storage()
+                .persistent()
+                .set(&earnings_key, &checked_add(e, prev, bonus));
+            e.storage().persistent().extend_ttl(
+                &earnings_key,
+                INSTANCE_LIFETIME_THRESHOLD,
+                INSTANCE_BUMP_AMOUNT,
+            );
+            e.storage().persistent().set(&bonus_paid_key, &true);
+            e.storage().persistent().extend_ttl(
+                &bonus_paid_key,
+                INSTANCE_LIFETIME_THRESHOLD,
+                INSTANCE_BUMP_AMOUNT,
+            );
+            e.events().publish(
+                (Symbol::new(e, "referral_bonus_credited"),),
+                (referrer, job.client.clone(), bonus),
+            );
+        }
+    }
+    payout
 }
 
 fn get_description_payload_max_bytes_storage(e: &Env) -> u32 {
@@ -5994,6 +6053,7 @@ mod test {
             deadline,
             token: native_token.clone(),
             revision_count: 0,
+            submitted_at: 0,
         };
 
         assert_eq!(client.get_job(&job_id), expected);
@@ -6029,6 +6089,7 @@ mod test {
             deadline,
             token: native_token.clone(),
             revision_count: 0,
+            submitted_at: 0,
         };
         assert_eq!(after_accept, expected_accept);
 
@@ -6037,6 +6098,7 @@ mod test {
         let after_submit = client.get_job(&job_id);
         let expected_submit = Job {
             status: JobStatus::SubmittedForReview,
+            submitted_at: 1_710_000_000,
             ..expected_accept
         };
         assert_eq!(after_submit, expected_submit);
@@ -8281,5 +8343,95 @@ mod test {
     fn dashboard_stats_rejects_non_admin() {
         let (_, client, _, user, _, _) = setup();
         client.get_dashboard_stats(&user);
+    }
+
+    // ── SC-64: Auto-approval and timelock tests ────────────────────────────
+
+    #[test]
+    fn test_auto_approve_success() {
+        let (env, client, admin, user, freelancer, native_token) = setup();
+        let asset = token::StellarAssetClient::new(&env, &native_token);
+        asset.mint(&user, &10_000_000i128);
+
+        // 1. Post and accept job
+        let job_id = client.post_job(&user, &1_000_000i128, &hash(&env), &32u32, &0u64, &native_token);
+        client.accept_job(&freelancer, &job_id);
+
+        // 2. Submit work
+        client.submit_work(&freelancer, &job_id);
+
+        // Verify submitted_at was recorded
+        let job = client.get_job(&job_id);
+        assert_eq!(job.submitted_at, 1_710_000_000);
+
+        // 3. Fast-forward ledger time past the default approval window (14 days)
+        let current_time = env.ledger().timestamp();
+        let window = client.get_approval_window();
+        assert_eq!(window, 14 * 24 * 60 * 60); // default 14 days
+        
+        env.ledger().set_timestamp(current_time + window + 1);
+
+        // 4. Auto-approve work
+        let freelancer_balance_before = token::Client::new(&env, &native_token).balance(&freelancer);
+        client.auto_approve(&freelancer, &job_id);
+
+        // Verify status and payout
+        let job_after = client.get_job(&job_id);
+        assert_eq!(job_after.status, JobStatus::Completed);
+        
+        let expected_fee = 1_000_000 * DEFAULT_FEE_BPS / BPS_DENOMINATOR;
+        let expected_payout = 1_000_000 - expected_fee;
+        
+        let freelancer_balance_after = token::Client::new(&env, &native_token).balance(&freelancer);
+        assert_eq!(freelancer_balance_after - freelancer_balance_before, expected_payout);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #7)")] // DeadlineNotExpired
+    fn test_auto_approve_before_window_fails() {
+        let (env, client, _, user, freelancer, native_token) = setup();
+        let job_id = client.post_job(&user, &1_000_000i128, &hash(&env), &32u32, &0u64, &native_token);
+        client.accept_job(&freelancer, &job_id);
+        client.submit_work(&freelancer, &job_id);
+
+        // Fast-forward only 13 days
+        let current_time = env.ledger().timestamp();
+        env.ledger().set_timestamp(current_time + 13 * 24 * 60 * 60);
+
+        client.auto_approve(&freelancer, &job_id);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #2)")] // Unauthorized
+    fn test_auto_approve_non_freelancer_fails() {
+        let (env, client, _, user, freelancer, native_token) = setup();
+        let job_id = client.post_job(&user, &1_000_000i128, &hash(&env), &32u32, &0u64, &native_token);
+        client.accept_job(&freelancer, &job_id);
+        client.submit_work(&freelancer, &job_id);
+
+        let current_time = env.ledger().timestamp();
+        env.ledger().set_timestamp(current_time + 15 * 24 * 60 * 60);
+
+        // Try to auto-approve as the client (should fail with Unauthorized)
+        client.auto_approve(&user, &job_id);
+    }
+
+    #[test]
+    fn test_update_approval_window() {
+        let (_, client, admin, _, _, _) = setup();
+
+        // Query default
+        assert_eq!(client.get_approval_window(), 14 * 24 * 60 * 60);
+
+        // Update to 7 days
+        client.update_approval_window(&admin, &(7 * 24 * 60 * 60));
+        assert_eq!(client.get_approval_window(), 7 * 24 * 60 * 60);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #13)")] // UnauthorizedAdmin
+    fn test_update_approval_window_non_admin_fails() {
+        let (_, client, _, user, _, _) = setup();
+        client.update_approval_window(&user, &(7 * 24 * 60 * 60));
     }
 }
