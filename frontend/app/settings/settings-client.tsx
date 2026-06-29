@@ -12,6 +12,13 @@ import {
   useNotifications,
   getEventLabel,
 } from "@/lib/notifications-context";
+import {
+  useTypography,
+  FONT_SIZE_MAP,
+  LINE_SPACING_MAP,
+  type FontSize,
+  type LineSpacing,
+} from "@/lib/typography-context";
 import type { NotificationEvent } from "@/lib/types";
 import { getNetwork } from "@/lib/stellar";
 import { useCallback, useEffect, useId, useState } from "react";
@@ -103,13 +110,46 @@ function Section({
   );
 }
 
+/** Live preview that renders at the chosen font-size / line-height overrides. */
+function TypographyPreview({
+  fontSize,
+  lineSpacing,
+}: {
+  fontSize: FontSize;
+  lineSpacing: LineSpacing;
+}) {
+  return (
+    <div
+      aria-label="Typography preview"
+      style={{
+        fontSize: FONT_SIZE_MAP[fontSize],
+        lineHeight: LINE_SPACING_MAP[lineSpacing],
+      }}
+      className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800"
+    >
+      <p className="font-semibold text-slate-900 dark:text-slate-100">
+        Preview — {FONT_SIZE_MAP[fontSize]} / {LINE_SPACING_MAP[lineSpacing]}×
+      </p>
+      <p className="mt-1 text-slate-600 dark:text-slate-400">
+        The quick brown fox jumps over the lazy dog. StellarWork connects
+        freelancers and clients through trustless on-chain escrow on the Stellar
+        network.
+      </p>
+    </div>
+  );
+}
+
 export default function SettingsClient() {
   const { theme, setTheme } = useTheme();
   const { wallet } = useWallet();
   const { preferences, setPreference } = useNotifications();
+  const { fontSize, lineSpacing, setFontSize, setLineSpacing, reset: resetTypography } =
+    useTypography();
   const network = getNetwork();
   const themeId = useId();
   const currencyId = useId();
+  const fontSizeId = useId();
+  const lineSpacingId = useId();
 
   const [currency, setCurrency] = useState<FiatCurrency>("USD");
   const [profileVisible, setProfileVisible] = useState(true);
@@ -213,6 +253,63 @@ export default function SettingsClient() {
         <button
           type="button"
           onClick={resetDisplay}
+          className="text-xs text-slate-400 underline hover:text-slate-600 dark:hover:text-slate-300"
+        >
+          Reset to defaults
+        </button>
+      </Section>
+
+      {/* Typography */}
+      <Section title="Typography">
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          Adjust text size and spacing to improve readability. Settings are
+          saved per browser and apply across the entire app.
+        </p>
+
+        <div className="flex flex-col gap-1.5">
+          <label
+            htmlFor={fontSizeId}
+            className="text-sm font-medium text-slate-800 dark:text-slate-200"
+          >
+            Font size
+          </label>
+          <select
+            id={fontSizeId}
+            value={fontSize}
+            onChange={(e) => setFontSize(e.target.value as FontSize)}
+            className="w-48 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+          >
+            <option value="small">Small (14px)</option>
+            <option value="medium">Medium (16px) — default</option>
+            <option value="large">Large (18px)</option>
+            <option value="x-large">Extra Large (20px)</option>
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label
+            htmlFor={lineSpacingId}
+            className="text-sm font-medium text-slate-800 dark:text-slate-200"
+          >
+            Line spacing
+          </label>
+          <select
+            id={lineSpacingId}
+            value={lineSpacing}
+            onChange={(e) => setLineSpacing(e.target.value as LineSpacing)}
+            className="w-48 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+          >
+            <option value="compact">Compact (1.4×)</option>
+            <option value="normal">Normal (1.6×) — default</option>
+            <option value="relaxed">Relaxed (1.8×)</option>
+          </select>
+        </div>
+
+        <TypographyPreview fontSize={fontSize} lineSpacing={lineSpacing} />
+
+        <button
+          type="button"
+          onClick={resetTypography}
           className="text-xs text-slate-400 underline hover:text-slate-600 dark:hover:text-slate-300"
         >
           Reset to defaults

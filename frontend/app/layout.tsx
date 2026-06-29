@@ -7,6 +7,7 @@ import { ToastProvider } from "@/components/ToastProvider";
 import { NotificationProvider } from "@/lib/notifications-context";
 import { MessagingProvider } from "@/lib/messaging-context";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import { TypographyProvider } from "@/lib/typography-context";
 import { Navigation } from "./navigation";
 import { ScrollRestorer } from "@/components/ScrollRestorer";
 import ErrorBoundary from "@/components/ErrorBoundary";
@@ -127,6 +128,7 @@ export default async function RootLayout({
         />
         <NextIntlClientProvider messages={messages} locale={locale}>
         <ThemeProvider>
+        <TypographyProvider>
         <WalletProvider>
           <NotificationProvider>
           <MessagingProvider>
@@ -150,6 +152,7 @@ export default async function RootLayout({
           </MessagingProvider>
           </NotificationProvider>
         </WalletProvider>
+        </TypographyProvider>
         </ThemeProvider>
         </NextIntlClientProvider>
       </body>
