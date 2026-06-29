@@ -28,6 +28,8 @@ import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 type PendingAction = "cancelJob" | "approveWork" | "submitWork" | "freelancerCancelJob";
 
+const BOOKMARK_STORAGE_KEY = "stellarwork:bookmarked-jobs";
+
 export default function JobDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -46,6 +48,8 @@ export default function JobDetailPage() {
   const [fiatCurrency, setFiatCurrency] = useState<FiatCurrency>("USD");
   const [fiatRates, setFiatRates] = useState<XlmFiatRateCache | null>(null);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isBookmarked, setIsBookmarked] = useState(false);
+  const [bookmarkAnimating, setBookmarkAnimating] = useState(false);
 
   const numericId = Number(id);
   const isIdValid = !isNaN(numericId) && numericId > 0 && Number.isInteger(numericId);
@@ -93,6 +97,18 @@ export default function JobDetailPage() {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(BOOKMARK_STORAGE_KEY);
+      if (!stored) return;
+      const parsed = JSON.parse(stored) as unknown;
+      if (!Array.isArray(parsed)) return;
+      setIsBookmarked(parsed.map(Number).includes(numericId));
+    } catch {
+      // Ignore
+    }
+  }, [numericId]);
 
   useEffect(() => {
     setFiatCurrency(getPreferredFiatCurrency());
@@ -232,6 +248,33 @@ export default function JobDetailPage() {
       }, 2000);
     } catch (err) {
       console.error("Failed to copy!", err);
+    }
+  }
+
+  function toggleBookmark() {
+    setBookmarkAnimating(true);
+    try {
+      const stored = localStorage.getItem(BOOKMARK_STORAGE_KEY);
+      let ids: number[] = [];
+      if (stored) {
+        const parsed = JSON.parse(stored) as unknown;
+        if (Array.isArray(parsed)) {
+          ids = parsed.map(Number).filter((v) => Number.isInteger(v) && v > 0);
+        }
+      }
+      if (ids.includes(numericId)) {
+        ids = ids.filter((v) => v !== numericId);
+      } else {
+        ids.push(numericId);
+      }
+      if (ids.length === 0) {
+        localStorage.removeItem(BOOKMARK_STORAGE_KEY);
+      } else {
+        localStorage.setItem(BOOKMARK_STORAGE_KEY, JSON.stringify(ids));
+      }
+      setIsBookmarked(ids.includes(numericId));
+    } finally {
+      setTimeout(() => setBookmarkAnimating(false), 300);
     }
   }
 
@@ -384,9 +427,24 @@ export default function JobDetailPage() {
       )}
 
       <article className="space-y-2 rounded-lg border border-slate-200 bg-white p-5 text-sm">
-        <p>
-          <strong>Status:</strong> <StatusPill status={job.status} />
-        </p>
+        <div className="flex items-center justify-between gap-2">
+          <p>
+            <strong>Status:</strong> <StatusPill status={job.status} />
+          </p>
+          <button
+            type="button"
+            onClick={toggleBookmark}
+            className={`rounded-md border px-3 py-1.5 text-sm font-medium transition-all duration-200 ${
+              isBookmarked
+                ? "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+            } ${bookmarkAnimating ? "scale-110" : "scale-100"}`}
+            aria-pressed={isBookmarked}
+            title={isBookmarked ? "Remove bookmark" : "Bookmark this job"}
+          >
+            {isBookmarked ? "★ Saved" : "☆ Save"}
+          </button>
+        </div>
         <p>
           <strong>Client:</strong> {job.client}
         </p>

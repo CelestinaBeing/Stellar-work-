@@ -62,6 +62,7 @@ export default function HomePage() {
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
   const [showBookmarkedOnly, setShowBookmarkedOnly] = useState(false);
   const [bookmarkedIds, setBookmarkedIds] = useState<number[]>([]);
+  const [animatingBookmarkId, setAnimatingBookmarkId] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [recentSearches, setRecentSearches] = useState<string[] | null>(null);
   const [resultsAnnouncement, setResultsAnnouncement] = useState("");
@@ -788,17 +789,23 @@ export default function HomePage() {
                   </button>
                   <button
                     type="button"
-                    className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    className={`rounded-md border px-4 py-2 text-sm font-medium transition-all duration-300 ${
+                      bookmarkedIds.includes(id)
+                        ? "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                        : "border-slate-300 text-slate-700 hover:bg-slate-50"
+                    } ${animatingBookmarkId === id ? "scale-110" : "scale-100"}`}
                     onClick={() => {
+                      setAnimatingBookmarkId(id);
                       setBookmarkedIds((prev) =>
                         prev.includes(id)
                           ? prev.filter((value) => value !== id)
                           : [...prev, id],
                       );
+                      setTimeout(() => setAnimatingBookmarkId(null), 300);
                     }}
                     aria-pressed={bookmarkedIds.includes(id)}
                   >
-                    {bookmarkedIds.includes(id) ? "Bookmarked" : "Bookmark"}
+                    {bookmarkedIds.includes(id) ? "★ Saved" : "☆ Save"}
                   </button>
                 </div>
                 {!wallet && (
