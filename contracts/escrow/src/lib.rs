@@ -217,13 +217,13 @@ impl EscrowContract {
         if description_payload_len == 0 {
             panic_with_error!(&e, Error::InvalidDescriptionHash);
         }
-        if description_payload_len > get_description_payload_max_bytes_storage(&e) {
-            panic_with_error!(&e, Error::DescriptionPayloadTooLarge);
-        }
         client.require_auth();
         require_active_access(&e, &client);
         if deadline != 0 && e.ledger().timestamp() > deadline {
             panic_with_error!(&e, Error::InvalidDeadline);
+        }
+        if description_payload_len > get_description_payload_max_bytes_storage(&e) {
+            panic_with_error!(&e, Error::DescriptionPayloadTooLarge);
         }
         if !e
             .storage()
@@ -238,15 +238,17 @@ impl EscrowContract {
         token_client.transfer(&client, &e.current_contract_address(), &amount);
 
         let job_id = next_job_id(&e);
+        let job_token = token.clone();
+        let job_client = client.clone();
         let job = Job {
-            client: client.clone(),
+            client: job_client,
             freelancer: Option::None,
             amount,
             description_hash: desc_hash,
             status: JobStatus::Open,
             created_at: e.ledger().timestamp(),
             deadline,
-            token: token.clone(),
+            token: job_token,
             revision_count: 0,
         };
 
