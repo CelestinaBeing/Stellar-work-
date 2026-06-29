@@ -86,6 +86,22 @@ pub struct MilestoneInput {
 ///    5_000 → 50 / 50 split (fee deducted from total before splitting)
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DashboardStats {
+    pub total_jobs: u64,
+    pub open_jobs: u64,
+    /// Jobs in InProgress or SubmittedForReview status.
+    pub active_jobs: u64,
+    pub completed_jobs: u64,
+    pub cancelled_jobs: u64,
+    pub disputed_jobs: u64,
+    /// Fees accrued in the native token (in stroops).
+    pub total_fees_accrued: i128,
+    /// Sum of all job amounts ever posted (in stroops).
+    pub total_volume: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FeeTier {
     pub min_amount: i128,
     pub fee_bps: i128,
@@ -1609,6 +1625,63 @@ impl EscrowContract {
             }
         }
         jobs
+    }
+
+    /// Returns all key platform metrics in a single contract call.
+    /// Requires admin authentication to prevent data leakage.
+    pub fn get_dashboard_stats(e: Env, admin: Address) -> DashboardStats {
+        admin.require_auth();
+        let current_admin = load_admin(&e);
+        if admin != current_admin {
+            panic_with_error!(&e, Error::UnauthorizedAdmin);
+        }
+
+        let total_jobs = get_jobs_count(&e);
+        let mut open_jobs: u64 = 0;
+        let mut active_jobs: u64 = 0;
+        let mut completed_jobs: u64 = 0;
+        let mut cancelled_jobs: u64 = 0;
+        let mut disputed_jobs: u64 = 0;
+        let mut total_volume: i128 = 0;
+
+        let all_ids: Vec<u64> = e
+            .storage()
+            .persistent()
+            .get(&DataKey::AllJobIds)
+            .unwrap_or(Vec::new(&e));
+
+        for i in 0..all_ids.len() {
+            if let Some(job_id) = all_ids.get(i) {
+                if let Some(job) = e
+                    .storage()
+                    .persistent()
+                    .get::<DataKey, Job>(&DataKey::Job(job_id))
+                {
+                    total_volume = checked_add(&e, total_volume, job.amount);
+                    match job.status {
+                        JobStatus::Open => open_jobs += 1,
+                        JobStatus::InProgress | JobStatus::SubmittedForReview => active_jobs += 1,
+                        JobStatus::Completed => completed_jobs += 1,
+                        JobStatus::Cancelled => cancelled_jobs += 1,
+                        JobStatus::Disputed => disputed_jobs += 1,
+                    }
+                }
+            }
+        }
+
+        let native_token = load_native_token(&e);
+        let total_fees_accrued = get_token_fees(&e, &native_token);
+
+        DashboardStats {
+            total_jobs,
+            open_jobs,
+            active_jobs,
+            completed_jobs,
+            cancelled_jobs,
+            disputed_jobs,
+            total_fees_accrued,
+            total_volume,
+        }
     }
 }
 
@@ -8125,5 +8198,88 @@ mod test {
         let events_before = env.events().all().len();
         client.accept_ownership(&new_admin);
         assert!(env.events().all().len() > events_before);
+    }
+
+    // ── Issue SC-81: get_dashboard_stats tests ────────────────────────────
+
+    #[test]
+    fn dashboard_stats_empty_platform() {
+        let (_, client, admin, _, _, _) = setup();
+        let stats = client.get_dashboard_stats(&admin);
+        assert_eq!(stats.total_jobs, 0);
+        assert_eq!(stats.open_jobs, 0);
+        assert_eq!(stats.active_jobs, 0);
+        assert_eq!(stats.completed_jobs, 0);
+        assert_eq!(stats.cancelled_jobs, 0);
+        assert_eq!(stats.disputed_jobs, 0);
+        assert_eq!(stats.total_fees_accrued, 0);
+        assert_eq!(stats.total_volume, 0);
+    }
+
+    #[test]
+    fn dashboard_stats_counts_open_job() {
+        let (env, client, admin, user, _, native_token) = setup();
+        client.post_job(&user, &1_000_000i128, &hash(&env), &32u32, &0u64, &native_token);
+        let stats = client.get_dashboard_stats(&admin);
+        assert_eq!(stats.total_jobs, 1);
+        assert_eq!(stats.open_jobs, 1);
+        assert_eq!(stats.active_jobs, 0);
+        assert_eq!(stats.total_volume, 1_000_000);
+    }
+
+    #[test]
+    fn dashboard_stats_counts_active_and_completed() {
+        let (env, client, admin, user, freelancer, native_token) = setup();
+        let asset = token::StellarAssetClient::new(&env, &native_token);
+        asset.mint(&user, &10_000_000_000i128);
+
+        // Post and complete one job
+        let j1 = client.post_job(&user, &1_000_000i128, &hash(&env), &32u32, &0u64, &native_token);
+        client.accept_job(&freelancer, &j1);
+        client.submit_work(&freelancer, &j1);
+        client.approve_work(&user, &j1);
+
+        // Post and accept (InProgress) another
+        let h2 = BytesN::from_array(&env, &[8; 32]);
+        let j2 = client.post_job(&user, &500_000i128, &h2, &32u32, &0u64, &native_token);
+        client.accept_job(&freelancer, &j2);
+
+        let stats = client.get_dashboard_stats(&admin);
+        assert_eq!(stats.total_jobs, 2);
+        assert_eq!(stats.open_jobs, 0);
+        assert_eq!(stats.active_jobs, 1);
+        assert_eq!(stats.completed_jobs, 1);
+        assert_eq!(stats.cancelled_jobs, 0);
+        assert_eq!(stats.total_volume, 1_500_000);
+        // fees accrued from j1 approval
+        let expected_fee = 1_000_000 * DEFAULT_FEE_BPS / BPS_DENOMINATOR;
+        assert_eq!(stats.total_fees_accrued, expected_fee);
+    }
+
+    #[test]
+    fn dashboard_stats_counts_cancelled_and_disputed() {
+        let (env, client, admin, user, freelancer, native_token) = setup();
+
+        // Post and cancel one job
+        let j1 = client.post_job(&user, &1_000_000i128, &hash(&env), &32u32, &0u64, &native_token);
+        client.cancel_job(&user, &j1);
+
+        // Post and dispute another
+        let h2 = BytesN::from_array(&env, &[8; 32]);
+        let j2 = client.post_job(&user, &1_000_000i128, &h2, &32u32, &0u64, &native_token);
+        client.accept_job(&freelancer, &j2);
+        client.raise_dispute(&user, &j2);
+
+        let stats = client.get_dashboard_stats(&admin);
+        assert_eq!(stats.cancelled_jobs, 1);
+        assert_eq!(stats.disputed_jobs, 1);
+        assert_eq!(stats.total_volume, 2_000_000);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #13)")]
+    fn dashboard_stats_rejects_non_admin() {
+        let (_, client, _, user, _, _) = setup();
+        client.get_dashboard_stats(&user);
     }
 }

@@ -10,6 +10,7 @@ import { useState, useEffect, useRef } from "react";
 import NetworkBadge from "@/components/NetworkBadge";
 import NotificationInbox from "@/components/NotificationInbox";
 import WalletMenu from "@/components/WalletMenu";
+import VoiceNav from "@/components/VoiceNav";
 
 function ThemeToggle() {
   const { theme, setTheme } = useTheme();
@@ -209,6 +210,7 @@ export function Navigation() {
             ))}
           </nav>
 
+          <VoiceNav />
           <NotificationInbox />
           <ThemeToggle />
           <LanguageSwitcher />
