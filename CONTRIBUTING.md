@@ -20,7 +20,33 @@ New contributors: start with the [onboarding checklist](docs/contributor-onboard
 - Run `soroban contract build` in `contracts/escrow`.
 - Run `cargo test` in `contracts/escrow`.
 - Run `cargo fmt --all -- --check` in `contracts/escrow` to verify formatting.
+- Run `make coverage-contract` to verify test coverage meets the 80% threshold.
 - Run frontend checks for changed frontend files.
+
+## Contract Code Coverage
+
+To maintain high code quality, we track test coverage for our Soroban smart contracts. We require a minimum of **80% code coverage** for all Rust contract code.
+
+### Running Coverage Locally
+
+You can generate code coverage reports locally using `cargo-tarpaulin`.
+
+1. Ensure you have `cargo-tarpaulin` installed:
+   ```bash
+   cargo install cargo-tarpaulin
+   ```
+2. Run the coverage script using the Makefile:
+   ```bash
+   make coverage-contract
+   ```
+   Or run the script directly:
+   ```bash
+   ./contracts/coverage.sh
+   ```
+
+This will run the test suite, analyze the coverage, and generate:
+- An interactive HTML report at `coverage/tarpaulin-report.html` (open this in your browser to inspect line-by-line coverage).
+- An LCOV report at `coverage/lcov.info` (used for CI integration).
 
 ## Pre-commit Hooks (Optional)
 
