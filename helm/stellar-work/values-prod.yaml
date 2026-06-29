@@ -1,0 +1,44 @@
+# Production overrides — HA, TLS, autoscaling, PDB.
+replicaCount: 2
+
+image:
+  pullPolicy: Always
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: stellar-work.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: stellar-work-tls
+      hosts:
+        - stellar-work.example.com
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 65
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+env:
+  NEXT_PUBLIC_STELLAR_NETWORK: mainnet
+  NEXT_PUBLIC_HORIZON_URL: "https://horizon.stellar.org"
+  NEXT_PUBLIC_SOROBAN_RPC_URL: "https://soroban-rpc.mainnet.stellar.gateway.fm"
