@@ -1,0 +1,25 @@
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/contracts/escrow"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+    reviewers:
+      - "anumukul"
+    open-pull-requests-limit: 5
+    versioning-strategy: auto
+
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+    reviewers:
+      - "anumukul"
+    open-pull-requests-limit: 5
+    versioning-strategy: auto

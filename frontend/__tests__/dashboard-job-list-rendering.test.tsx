@@ -19,6 +19,9 @@ vi.mock("@/lib/contract", () => ({
   cancelJob: (...args: unknown[]) => mockCancelJob(...args),
   submitWork: (...args: unknown[]) => mockSubmitWork(...args),
   enforceDeadline: (...args: unknown[]) => mockEnforceDeadline(...args),
+  freelancerCancelJob: vi.fn(),
+  getDescriptionCid: vi.fn(),
+  storeDescriptionCid: vi.fn(),
 }));
 
 vi.mock("@/lib/wallet-context", () => ({
@@ -33,6 +36,21 @@ vi.mock("@/components/ToastProvider", () => ({
     showSuccess: vi.fn(),
     showError: vi.fn(),
   }),
+}));
+
+vi.mock("@/lib/notifications-context", () => ({
+  useNotifications: () => ({
+    notifications: [],
+    unreadCount: 0,
+    addNotification: vi.fn(),
+    markAsSeen: vi.fn(),
+    markAllAsSeen: vi.fn(),
+    preferences: { job_accepted: true, work_submitted: true, work_approved: true, job_cancelled: true, dispute_raised: true, dispute_resolved: true },
+    setPreference: vi.fn(),
+    clearNotifications: vi.fn(),
+  }),
+  NotificationProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  getEventLabel: (event: string) => event,
 }));
 
 describe("Dashboard job list rendering", () => {
@@ -117,7 +135,7 @@ describe("Dashboard job list rendering", () => {
 
   it("renders skeleton placeholders while jobs are loading", async () => {
     // Hold the count promise open so the loading state is observable.
-    let resolveCount: (n: number) => void = () => {};
+    let resolveCount: (n: number) => void = () => { void 0; };
     mockGetJobCount.mockReturnValue(
       new Promise<number>((resolve) => {
         resolveCount = resolve;

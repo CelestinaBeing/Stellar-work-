@@ -1,6 +1,7 @@
 import React from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ToastProvider } from "@/components/ToastProvider";
 import DisputesPage from "@/app/disputes/page";
 
 const mockLoadDisputesPageData = vi.fn();
@@ -46,7 +47,7 @@ describe("Disputes page render (#305)", () => {
       eligibleJobs: [],
     });
 
-    render(<DisputesPage />);
+    render(<ToastProvider><DisputesPage /></ToastProvider>);
 
     await waitFor(() =>
       expect(
@@ -61,7 +62,7 @@ describe("Disputes page render (#305)", () => {
       eligibleJobs: [],
     });
 
-    render(<DisputesPage />);
+    render(<ToastProvider><DisputesPage /></ToastProvider>);
 
     await waitFor(() =>
       expect(screen.getAllByText(/No disputes/i).length).toBeGreaterThan(0),
@@ -74,7 +75,7 @@ describe("Disputes page render (#305)", () => {
       eligibleJobs: [],
     });
 
-    render(<DisputesPage />);
+    render(<ToastProvider><DisputesPage /></ToastProvider>);
 
     await waitFor(() =>
       expect(
@@ -92,7 +93,7 @@ describe("Disputes page render (#305)", () => {
       eligibleJobs: [],
     });
 
-    render(<DisputesPage />);
+    render(<ToastProvider><DisputesPage /></ToastProvider>);
 
     await waitFor(() => {
       expect(screen.getByText("Logo design")).toBeInTheDocument();

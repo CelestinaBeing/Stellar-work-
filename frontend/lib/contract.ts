@@ -1,7 +1,9 @@
 "use client";
 
-import { callContract, nativeToScVal } from "@/lib/stellar";
-import type { Job } from "@/lib/types";
+import { callContract, nativeToScVal, xdr } from "@/lib/stellar";
+import { requireContractId } from "@/lib/config";
+export { requireContractId };
+import type { Job, Milestone } from "@/lib/types";
 
 export function hexToBytes(hex: string): Uint8Array {
   const normalized = hex.startsWith("0x") ? hex.slice(2) : hex;
@@ -16,14 +18,6 @@ export function hexToBytes(hex: string): Uint8Array {
     bytes[i / 2] = Number.parseInt(normalized.slice(i, i + 2), 16);
   }
   return bytes;
-}
-
-export function requireContractId(): string {
-  const contractId = process.env.NEXT_PUBLIC_CONTRACT_ID ?? "";
-  if (!contractId) {
-    throw new Error("NEXT_PUBLIC_CONTRACT_ID is not configured.");
-  }
-  return contractId;
 }
 
 export async function postJob(
@@ -99,6 +93,29 @@ export async function enforceDeadline(client: string, jobId: string) {
   ]);
 }
 
+export async function extendDeadline(
+  client: string,
+  jobId: string,
+  newDeadline: string,
+  freelancerConsent?: string,
+) {
+  const args = [
+    nativeToScVal(client, { type: "address" }),
+    nativeToScVal(jobId, { type: "u64" }),
+    nativeToScVal(newDeadline, { type: "u64" }),
+  ];
+  if (freelancerConsent) {
+    return callContract(requireContractId(), "extend_deadline", [
+      ...args,
+      nativeToScVal(xdr.ScVal.scvVec([nativeToScVal(freelancerConsent, { type: "address" })])),
+    ]);
+  }
+  return callContract(requireContractId(), "extend_deadline", [
+    ...args,
+    xdr.ScVal.scvVec([]),
+  ]);
+}
+
 export async function extendJobTtl(caller: string, jobId: string) {
   return callContract(requireContractId(), "extend_job_ttl", [
     nativeToScVal(caller, { type: "address" }),
@@ -113,10 +130,10 @@ export async function raiseDispute(caller: string, jobId: string) {
   ]);
 }
 
-export async function resolveDispute(jobId: string, winner: string) {
+export async function resolveDispute(jobId: string, clientBps: number) {
   return callContract(requireContractId(), "resolve_dispute", [
     nativeToScVal(jobId, { type: "u64" }),
-    nativeToScVal(winner, { type: "address" }),
+    xdr.ScVal.scvVec([nativeToScVal(clientBps, { type: "u32" })]),
   ]);
 }
 
@@ -189,3 +206,257 @@ export async function getJobCount(): Promise<number> {
   );
   return Number(response.data ?? 0);
 }
+
+export async function freelancerCancelJob(freelancer: string, jobId: string) {
+  return callContract(requireContractId(), "freelancer_cancel_job", [
+    nativeToScVal(freelancer, { type: "address" }),
+    nativeToScVal(jobId, { type: "u64" }),
+  ]);
+}
+
+export async function storeDescriptionCid(caller: string, descHashHex: string, cid: string) {
+  return callContract(requireContractId(), "store_description_cid", [
+    nativeToScVal(caller, { type: "address" }),
+    nativeToScVal(hexToBytes(descHashHex), { type: "bytes" }),
+    nativeToScVal(cid, { type: "string" }),
+  ]);
+}
+
+export async function getDescriptionCid(descHashHex: string): Promise<string | null> {
+  const response = await callContract(
+    requireContractId(),
+    "get_description_cid",
+    [nativeToScVal(hexToBytes(descHashHex), { type: "bytes" })],
+    { readOnly: true },
+  );
+  const cid = response.data as string;
+  return cid || null;
+}
+
+// ─── Milestone helpers ────────────────────────────────────────────────────────
+
+/** Input for a single milestone when creating a milestone-based job. */
+export interface MilestoneInput {
+  /** 32-byte description hash as a hex string (64 hex chars). */
+  descriptionHashHex: string;
+  /** Amount in stroops as a string. */
+  amount: string;
+}
+
+/**
+ * Create a job whose total escrow is the sum of all milestone amounts.
+ * Returns the new job ID.
+ */
+export async function createJobWithMilestones(
+  client: string,
+  milestones: MilestoneInput[],
+  descHashHex: string,
+  descriptionPayloadLen: number,
+  deadline: string,
+  tokenAddress: string,
+) {
+  // Encode milestones as a Vec<MilestoneInput> — each element is a struct map.
+  const encodedMilestones = xdr.ScVal.scvVec(
+    milestones.map((m) =>
+      xdr.ScVal.scvMap([
+        new xdr.ScMapEntry({
+          key: xdr.ScVal.scvSymbol("description_hash"),
+          val: nativeToScVal(hexToBytes(m.descriptionHashHex), { type: "bytes" }),
+        }),
+        new xdr.ScMapEntry({
+          key: xdr.ScVal.scvSymbol("amount"),
+          val: nativeToScVal(m.amount, { type: "i128" }),
+        }),
+      ])
+    )
+  );
+
+  return callContract(requireContractId(), "create_job_with_milestones", [
+    nativeToScVal(client, { type: "address" }),
+    encodedMilestones,
+    nativeToScVal(hexToBytes(descHashHex), { type: "bytes" }),
+    nativeToScVal(descriptionPayloadLen, { type: "u32" }),
+    nativeToScVal(deadline, { type: "u64" }),
+    nativeToScVal(tokenAddress, { type: "address" }),
+  ]);
+}
+
+/**
+ * Release payment for a single milestone.
+ * Only the client may call this; the job must be InProgress.
+ */
+export async function approveMilestone(
+  client: string,
+  jobId: string,
+  milestoneId: number,
+) {
+  return callContract(requireContractId(), "approve_milestone", [
+    nativeToScVal(client, { type: "address" }),
+    nativeToScVal(jobId, { type: "u64" }),
+    nativeToScVal(milestoneId, { type: "u32" }),
+  ]);
+}
+
+/**
+ * Fetch all milestones for a job.
+ * Returns null if the job has no milestones (regular job).
+ */
+export async function getMilestones(jobId: string): Promise<Milestone[] | null> {
+  try {
+    const response = await callContract(
+      requireContractId(),
+      "get_milestones",
+      [nativeToScVal(jobId, { type: "u64" })],
+      { readOnly: true },
+    );
+    if (!response.data) return null;
+    return response.data as Milestone[];
+  } catch {
+    // Contract panics with NoMilestones (#23) for regular jobs — treat as null.
+    return null;
+  }
+}
+
+// --- Admin Job Views ---
+
+export async function adminGetAllJobs(admin: string, startIndex: number, limit: number): Promise<Job[]> {
+  const response = await callContract(
+    requireContractId(),
+    "admin_get_all_jobs",
+    [
+      nativeToScVal(admin, { type: "address" }),
+      nativeToScVal(startIndex, { type: "u32" }),
+      nativeToScVal(limit, { type: "u32" }),
+    ],
+    { readOnly: true },
+  );
+  return (response.data as Job[]) ?? [];
+}
+
+export async function adminGetJobCount(admin: string): Promise<number> {
+  const response = await callContract(
+    requireContractId(),
+    "admin_get_job_count",
+    [nativeToScVal(admin, { type: "address" })],
+    { readOnly: true },
+  );
+  return Number(response.data ?? 0);
+}
+
+export async function adminGetJobsByStatus(admin: string, status: string, startIndex: number, limit: number): Promise<Job[]> {
+  const response = await callContract(
+    requireContractId(),
+    "admin_get_jobs_by_status",
+    [
+      nativeToScVal(admin, { type: "address" }),
+      // For enums, nativeToScVal converts the string literal cleanly for Soroban
+      nativeToScVal(status, { type: "symbol" }),
+      nativeToScVal(startIndex, { type: "u32" }),
+      nativeToScVal(limit, { type: "u32" }),
+    ],
+    { readOnly: true },
+  );
+  return (response.data as Job[]) ?? [];
+}
+
+// --- Access Control ---
+
+export async function setWhitelistMode(admin: string, enabled: boolean) {
+  return callContract(requireContractId(), "set_whitelist_mode", [
+    nativeToScVal(admin, { type: "address" }),
+    nativeToScVal(enabled, { type: "bool" }),
+  ]);
+}
+
+export async function isWhitelistModeEnabled(): Promise<boolean> {
+  const response = await callContract(
+    requireContractId(),
+    "is_whitelist_mode_enabled",
+    [],
+    { readOnly: true },
+  );
+  return Boolean(response.data ?? false);
+}
+
+export async function addToBlacklist(admin: string, address: string) {
+  return callContract(requireContractId(), "add_to_blacklist", [
+    nativeToScVal(admin, { type: "address" }),
+    nativeToScVal(address, { type: "address" }),
+  ]);
+}
+
+export async function removeFromBlacklist(admin: string, address: string) {
+  return callContract(requireContractId(), "remove_from_blacklist", [
+    nativeToScVal(admin, { type: "address" }),
+    nativeToScVal(address, { type: "address" }),
+  ]);
+}
+
+export async function addToWhitelist(admin: string, address: string) {
+  return callContract(requireContractId(), "add_to_whitelist", [
+    nativeToScVal(admin, { type: "address" }),
+    nativeToScVal(address, { type: "address" }),
+  ]);
+}
+
+export async function removeFromWhitelist(admin: string, address: string) {
+  return callContract(requireContractId(), "remove_from_whitelist", [
+    nativeToScVal(admin, { type: "address" }),
+    nativeToScVal(address, { type: "address" }),
+  ]);
+}
+
+export async function isBlacklisted(address: string): Promise<boolean> {
+  const response = await callContract(
+    requireContractId(),
+    "is_blacklisted",
+    [nativeToScVal(address, { type: "address" })],
+    { readOnly: true },
+  );
+  return Boolean(response.data ?? false);
+}
+
+export async function isWhitelisted(address: string): Promise<boolean> {
+  const response = await callContract(
+    requireContractId(),
+    "is_whitelisted",
+    [nativeToScVal(address, { type: "address" })],
+    { readOnly: true },
+  );
+  return Boolean(response.data ?? false);
+}
+
+// Issue #463 — Partial split dispute resolution
+export async function resolveDisputeSplit(jobId: string, clientPayoutBps: number) {
+  return callContract(requireContractId(), "resolve_dispute_split", [
+    nativeToScVal(jobId, { type: "u64" }),
+    nativeToScVal(String(clientPayoutBps), { type: "u32" }),
+  ]);
+}
+
+// Issue #456 — Trusted forwarder / gasless operations
+export async function setTrustedForwarder(forwarder: string, isTrusted: boolean) {
+  return callContract(requireContractId(), "set_trusted_forwarder", [
+    nativeToScVal(forwarder, { type: "address" }),
+    nativeToScVal(isTrusted, { type: "bool" }),
+  ]);
+}
+
+export async function isTrustedForwarder(forwarder: string): Promise<boolean> {
+  const response = await callContract(
+    requireContractId(),
+    "is_trusted_forwarder",
+    [nativeToScVal(forwarder, { type: "address" })],
+    { readOnly: true },
+  );
+  return Boolean(response.data ?? false);
+}
+
+export async function relayCancelJob(relayer: string, client: string, jobId: string) {
+  return callContract(requireContractId(), "relay_cancel_job", [
+    nativeToScVal(relayer, { type: "address" }),
+    nativeToScVal(client, { type: "address" }),
+    nativeToScVal(jobId, { type: "u64" }),
+  ]);
+}
+

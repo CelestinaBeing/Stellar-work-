@@ -12,14 +12,13 @@ const signTransactionSpy = vi.fn();
 
 const isAllowedMock = vi.fn();
 const getAddressMock = vi.fn();
-const requestAccessMock = vi.fn();
 
 class FakeAccount {
   constructor(public id: string, public sequence: string) {}
   accountId() {
     return this.id;
   }
-  incrementSequenceNumber() {}
+  incrementSequenceNumber() { void 0; }
   sequenceNumber() {
     return this.sequence;
   }

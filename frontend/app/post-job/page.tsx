@@ -1,10 +1,20 @@
 "use client";
 
-import { getDescPayloadMax, postJob } from "@/lib/contract";
+import { getDescPayloadMax, postJob, storeDescriptionCid } from "@/lib/contract";
+import { uploadToIpfs } from "@/lib/ipfs-service";
 import ErrorBanner from "@/components/ErrorBanner";
+import RichTextEditor, { htmlToPlainText } from "@/components/RichTextEditor";
 import { getExplorerTxUrl } from "@/lib/stellar";
 import { useWallet } from "@/lib/wallet-context";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
+import {
+  getRateLimitStatus,
+  recordPostJob,
+  formatCooldown,
+  type RateLimitStatus,
+} from "@/lib/rate-limiter";
+
+const MIN_JOB_AMOUNT_XLM = 0.5;
 
 async function sha256Hex(input: string): Promise<string> {
   const bytes = new TextEncoder().encode(input);
@@ -19,6 +29,7 @@ export default function PostJobPage() {
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [deadline, setDeadline] = useState("");
+  const descriptionLabelId = useId();
   const [tokenAddress, setTokenAddress] = useState(
     process.env.NEXT_PUBLIC_NATIVE_TOKEN ?? "",
   );
@@ -34,6 +45,11 @@ export default function PostJobPage() {
     deadline?: string;
     tokenAddress?: string;
   }>({});
+  const [rateLimit, setRateLimit] = useState<RateLimitStatus>({
+    remaining: 5,
+    cooldownEndsAt: null,
+    isLimited: false,
+  });
 
   const parseAmountToStroops = (value: string): string | null => {
     const trimmed = value.trim();
@@ -63,6 +79,14 @@ export default function PostJobPage() {
       .catch(() => {
         // Keep default when contract read is unavailable.
       });
+  }, []);
+
+  useEffect(() => {
+    setRateLimit(getRateLimitStatus());
+    const interval = setInterval(() => {
+      setRateLimit(getRateLimitStatus());
+    }, 1000);
+    return () => clearInterval(interval);
   }, []);
 
   return (
@@ -99,9 +123,24 @@ export default function PostJobPage() {
             const amountStroops = parseAmountToStroops(amount);
             if (!amountStroops || BigInt(amountStroops) <= 0n) {
               nextFieldErrors.amount = "Enter a valid amount with up to 7 decimal places.";
+            } else {
+              const amountXlm = parseFloat(amount);
+              if (amountXlm < MIN_JOB_AMOUNT_XLM) {
+                nextFieldErrors.amount = `Minimum job amount is ${MIN_JOB_AMOUNT_XLM} XLM to prevent dust spam.`;
+              }
             }
-            const descriptionBytes = new TextEncoder().encode(description.trim()).length;
-            if (!description.trim()) {
+
+            const limitStatus = getRateLimitStatus();
+            if (limitStatus.isLimited) {
+              setError(
+                `Rate limit reached. You can post at most 5 jobs per hour. Try again in ${formatCooldown(limitStatus.cooldownEndsAt!)}.`,
+              );
+              setRateLimit(limitStatus);
+              return;
+            }
+            const plainDescription = htmlToPlainText(description);
+            const descriptionBytes = new TextEncoder().encode(plainDescription).length;
+            if (!plainDescription) {
               nextFieldErrors.description = "Job description cannot be empty.";
             } else if (descriptionBytes > maxDescPayloadBytes) {
               nextFieldErrors.description = `Description must be at most ${maxDescPayloadBytes} bytes (currently ${descriptionBytes}).`;
@@ -126,25 +165,39 @@ export default function PostJobPage() {
               setFieldErrors(nextFieldErrors);
               return;
             }
-            const trimmedDescription = description.trim();
-            const hashHex = await sha256Hex(trimmedDescription);
-            const descriptionPayloadLen = new TextEncoder().encode(trimmedDescription).length;
+            // Store the full HTML so rich text is preserved; derive plain text
+            // for the on-chain hash so plain-text consumers still work.
+            const htmlContent = description.trim();
+            const plainContent = htmlToPlainText(htmlContent);
+            const hashHex = await sha256Hex(plainContent);
+            const descriptionPayloadLen = new TextEncoder().encode(plainContent).length;
             const deadlineUnix = deadline
               ? Math.floor(new Date(deadline).getTime() / 1000).toString()
               : "0";
 
-            localStorage.setItem(`job-desc:${hashHex}`, trimmedDescription);
+            // Persist HTML for rich rendering; also store plain text under the hash key
+            localStorage.setItem(`job-desc:${hashHex}`, htmlContent);
+            const cid = await uploadToIpfs(htmlContent);
             const result = await postJob(
               wallet,
-              amountStroops,
+              amountStroops!,
               hashHex,
               descriptionPayloadLen,
               deadlineUnix,
-              tokenAddress,
+              tokenAddress.trim(),
             );
+            if (cid && !cid.startsWith("fallback:")) {
+              try {
+                await storeDescriptionCid(wallet, hashHex, cid);
+              } catch {
+                // CID storage is best-effort; description is still in localStorage
+              }
+            }
             if (result.hash) {
               setTxHash(result.hash);
             }
+            recordPostJob();
+            setRateLimit(getRateLimitStatus());
             const jobId = typeof result === "number" || typeof result === "string" ? result : null;
             const successMessage =
               jobId != null ? `Job #${jobId} created successfully.` : "Job submitted to contract.";
@@ -188,7 +241,7 @@ export default function PostJobPage() {
           <input
             className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2"
             type="number"
-            min="0"
+            min="0.0000001"
             step="0.0000001"
             value={amount}
             onChange={(e) => {
@@ -200,7 +253,7 @@ export default function PostJobPage() {
             required
           />
           <p id="post-job-amount-helper" className="mt-1 text-xs text-slate-500">
-            Enter amount in XLM with up to 7 decimal places (e.g., 10.5 or 0.0000001)
+            Enter amount in XLM with up to 7 decimal places (e.g., 10.5 or 0.0000001). Minimum: {MIN_JOB_AMOUNT_XLM} XLM.
           </p>
           {fieldErrors.amount && (
             <p id="post-job-amount-error" className="mt-1 text-xs text-red-600">
@@ -209,27 +262,28 @@ export default function PostJobPage() {
           )}
         </label>
 
-        <label className="block text-sm font-medium">
-          Job Description
-          <textarea
-            className="mt-1 min-h-36 w-full rounded-md border border-slate-300 px-3 py-2"
-            value={description}
-            onChange={(e) => {
-              setDescription(e.target.value);
-              setFieldErrors((current) => ({ ...current, description: undefined }));
-            }}
-            aria-invalid={Boolean(fieldErrors.description)}
-            aria-describedby={
-              fieldErrors.description ? "post-job-description-error" : undefined
-            }
-            required
-          />
+        <div className="block text-sm font-medium">
+          <span id={descriptionLabelId}>Job Description</span>
+          <div className="mt-1">
+            <RichTextEditor
+              value={description}
+              onChange={(html) => {
+                setDescription(html);
+                setFieldErrors((current) => ({ ...current, description: undefined }));
+              }}
+              maxBytes={maxDescPayloadBytes}
+              error={fieldErrors.description}
+              errorId={fieldErrors.description ? "post-job-description-error" : undefined}
+              labelId={descriptionLabelId}
+              required
+            />
+          </div>
           {fieldErrors.description && (
             <p id="post-job-description-error" className="mt-1 text-xs text-red-600">
               {fieldErrors.description}
             </p>
           )}
-        </label>
+        </div>
 
         <label className="block text-sm font-medium">
           Deadline (optional)
@@ -274,10 +328,22 @@ export default function PostJobPage() {
           )}
         </label>
 
+        {rateLimit.cooldownEndsAt && (
+          <div
+            className="rounded-md bg-blue-50 p-3 text-sm text-blue-700"
+            role="status"
+            aria-live="polite"
+          >
+            {rateLimit.isLimited
+              ? `Rate limit: You can post again in ${formatCooldown(rateLimit.cooldownEndsAt)}`
+              : `${rateLimit.remaining} job post${rateLimit.remaining === 1 ? "" : "s"} remaining this hour`}
+          </div>
+        )}
+
         <button
           type="submit"
           className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={submitting}
+          disabled={submitting || rateLimit.isLimited}
           aria-busy={submitting}
         >
           {submitting ? "Posting..." : "Post Job"}

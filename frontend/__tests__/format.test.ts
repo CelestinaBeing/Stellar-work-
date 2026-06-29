@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toXlm } from "@/lib/format";
+import { formatFiatAmount, formatXlmWithFiat, toXlm } from "@/lib/format";
 
 describe("toXlm", () => {
   it("formats common stroop amounts", () => {
@@ -23,5 +23,23 @@ describe("toXlm", () => {
     const formatted = toXlm("1000000000000000000000");
     expect(/[eE][+-]?\d+/.test(formatted)).toBe(false);
     expect(/\d{2}$/.test(formatted)).toBe(true);
+  });
+});
+
+describe("formatXlmWithFiat", () => {
+  it("shows the selected fiat value next to XLM", () => {
+    const formatted = formatXlmWithFiat(50_000_000, "USD", { USD: 0.12 });
+
+    expect(formatted).toContain("5.00 XLM");
+    expect(formatted).toContain("0.60");
+    expect(formatted).toContain("USD");
+  });
+
+  it("falls back to XLM only when a rate is unavailable", () => {
+    expect(formatXlmWithFiat(50_000_000, "EUR", { USD: 0.12 })).toBe("5.00 XLM");
+  });
+
+  it("formats zero-decimal currencies", () => {
+    expect(formatFiatAmount(125.4, "JPY")).toContain("125");
   });
 });

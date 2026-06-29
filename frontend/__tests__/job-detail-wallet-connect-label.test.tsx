@@ -18,10 +18,33 @@ vi.mock("@/lib/contract", () => ({
   submitWork: vi.fn(),
   approveWork: vi.fn(),
   cancelJob: vi.fn(),
+  freelancerCancelJob: vi.fn(),
+  getDescriptionCid: vi.fn(),
+  storeDescriptionCid: vi.fn(),
+}));
+
+vi.mock("@/lib/ipfs-service", () => ({
+  uploadToIpfs: vi.fn(),
+  fetchFromIpfs: vi.fn(),
 }));
 
 vi.mock("@/lib/wallet-context", () => ({
   useWallet: () => mockUseWallet(),
+}));
+
+vi.mock("@/lib/notifications-context", () => ({
+  useNotifications: () => ({
+    notifications: [],
+    unreadCount: 0,
+    addNotification: vi.fn(),
+    markAsSeen: vi.fn(),
+    markAllAsSeen: vi.fn(),
+    preferences: { job_accepted: true, work_submitted: true, work_approved: true, job_cancelled: true, dispute_raised: true, dispute_resolved: true },
+    setPreference: vi.fn(),
+    clearNotifications: vi.fn(),
+  }),
+  NotificationProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  getEventLabel: (event: string) => event,
 }));
 
 function makeJob(overrides: Partial<Job> = {}): Job {
@@ -138,7 +161,7 @@ describe("Job detail wallet connect CTA copy", () => {
   it("does not show the hint while the job is still loading", () => {
     mockUseWallet.mockReturnValue({ wallet: null, connectWallet: vi.fn() });
     // Never-resolving promise keeps the component in the fetching state
-    mockGetJob.mockReturnValue(new Promise(() => {}));
+    mockGetJob.mockReturnValue(new Promise(() => { void 0; }));
     renderJobPage();
 
     expect(

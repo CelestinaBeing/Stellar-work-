@@ -1,6 +1,7 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ToastProvider } from "@/components/ToastProvider";
 import DisputesPage from "@/app/disputes/page";
 
 const mockLoadDisputesPageData = vi.fn();
@@ -24,7 +25,7 @@ describe("Disputes page loading state", () => {
   it("clears spinner when the disputes request fails", async () => {
     mockLoadDisputesPageData.mockRejectedValue(new Error("network"));
 
-    render(<DisputesPage />);
+    render(<ToastProvider><DisputesPage /></ToastProvider>);
 
     await waitFor(() =>
       expect(
@@ -55,7 +56,7 @@ describe("Disputes page loading state", () => {
         eligibleJobs: [],
       });
 
-    render(<DisputesPage />);
+    render(<ToastProvider><DisputesPage /></ToastProvider>);
 
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument(),

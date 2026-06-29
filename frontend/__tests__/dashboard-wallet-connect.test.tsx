@@ -20,6 +20,9 @@ vi.mock("@/lib/contract", () => ({
   cancelJob: vi.fn(),
   submitWork: vi.fn(),
   enforceDeadline: vi.fn(),
+  freelancerCancelJob: vi.fn(),
+  getDescriptionCid: vi.fn(),
+  storeDescriptionCid: vi.fn(),
 }));
 
 vi.mock("@/components/ToastProvider", () => ({
@@ -27,6 +30,21 @@ vi.mock("@/components/ToastProvider", () => ({
     showSuccess: vi.fn(),
     showError: vi.fn(),
   }),
+}));
+
+vi.mock("@/lib/notifications-context", () => ({
+  useNotifications: () => ({
+    notifications: [],
+    unreadCount: 0,
+    addNotification: vi.fn(),
+    markAsSeen: vi.fn(),
+    markAllAsSeen: vi.fn(),
+    preferences: { job_accepted: true, work_submitted: true, work_approved: true, job_cancelled: true, dispute_raised: true, dispute_resolved: true },
+    setPreference: vi.fn(),
+    clearNotifications: vi.fn(),
+  }),
+  NotificationProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  getEventLabel: (event: string) => event,
 }));
 
 describe("Dashboard wallet connect flow", () => {

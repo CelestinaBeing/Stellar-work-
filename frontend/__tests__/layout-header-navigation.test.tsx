@@ -31,6 +31,10 @@ vi.mock("@/components/NetworkBadge", () => ({
   default: () => <span data-testid="network-badge">testnet</span>,
 }));
 
+vi.mock("@/components/NotificationInbox", () => ({
+  default: () => <div data-testid="notification-inbox" />,
+}));
+
 describe("Layout header navigation", () => {
   beforeEach(() => {
     vi.clearAllMocks();

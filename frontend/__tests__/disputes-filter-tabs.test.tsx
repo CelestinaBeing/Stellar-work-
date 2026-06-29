@@ -1,6 +1,7 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ToastProvider } from "@/components/ToastProvider";
 import DisputesPage from "@/app/disputes/page";
 
 const mockLoadDisputesPageData = vi.fn();
@@ -57,7 +58,7 @@ describe("Disputes page filter tab toggling", () => {
   });
 
   it("renders all filter tabs", async () => {
-    render(<DisputesPage />);
+    render(<ToastProvider><DisputesPage /></ToastProvider>);
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "all" })).toBeInTheDocument();
@@ -67,7 +68,7 @@ describe("Disputes page filter tab toggling", () => {
   });
 
   it("shows 'all' tab as selected by default", async () => {
-    render(<DisputesPage />);
+    render(<ToastProvider><DisputesPage /></ToastProvider>);
 
     await waitFor(() => {
       const allTab = screen.getByRole("button", { name: "all" });
@@ -76,7 +77,7 @@ describe("Disputes page filter tab toggling", () => {
   });
 
   it("toggles filter tab selection on click", async () => {
-    render(<DisputesPage />);
+    render(<ToastProvider><DisputesPage /></ToastProvider>);
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "all" })).toBeInTheDocument();
@@ -93,7 +94,7 @@ describe("Disputes page filter tab toggling", () => {
   });
 
   it("enforces single-select rule - only one filter tab active at a time", async () => {
-    render(<DisputesPage />);
+    render(<ToastProvider><DisputesPage /></ToastProvider>);
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "all" })).toBeInTheDocument();
@@ -118,7 +119,7 @@ describe("Disputes page filter tab toggling", () => {
   });
 
   it("filters disputes based on selected tab", async () => {
-    render(<DisputesPage />);
+    render(<ToastProvider><DisputesPage /></ToastProvider>);
 
     await waitFor(() => {
       expect(screen.getByText("Audit Contract")).toBeInTheDocument();
@@ -138,7 +139,7 @@ describe("Disputes page filter tab toggling", () => {
   });
 
   it("shows only resolved disputes when resolved tab is selected", async () => {
-    render(<DisputesPage />);
+    render(<ToastProvider><DisputesPage /></ToastProvider>);
 
     await waitFor(() => {
       expect(screen.getByText("Audit Contract")).toBeInTheDocument();
@@ -158,7 +159,7 @@ describe("Disputes page filter tab toggling", () => {
   });
 
   it("shows all disputes when all tab is selected", async () => {
-    render(<DisputesPage />);
+    render(<ToastProvider><DisputesPage /></ToastProvider>);
 
     await waitFor(() => {
       expect(screen.getByText("Audit Contract")).toBeInTheDocument();
@@ -185,7 +186,7 @@ describe("Disputes page filter tab toggling", () => {
   });
 
   it("maintains filter state across re-renders", async () => {
-    const { rerender } = render(<DisputesPage />);
+    const { rerender } = render(<ToastProvider><DisputesPage /></ToastProvider>);
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "all" })).toBeInTheDocument();
@@ -200,7 +201,7 @@ describe("Disputes page filter tab toggling", () => {
     });
 
     // Rerender to test state persistence
-    rerender(<DisputesPage />);
+    rerender(<ToastProvider><DisputesPage /></ToastProvider>);
 
     await waitFor(() => {
       expect(resolvedTab).toHaveClass("bg-slate-900", "text-white");
@@ -226,7 +227,7 @@ describe("Disputes page filter tab toggling", () => {
       eligibleJobs: [],
     });
 
-    render(<DisputesPage />);
+    render(<ToastProvider><DisputesPage /></ToastProvider>);
 
     await waitFor(() => {
       expect(screen.getByText("Audit Contract")).toBeInTheDocument();
@@ -261,7 +262,7 @@ describe("Disputes page filter tab toggling", () => {
       eligibleJobs: [],
     });
 
-    render(<DisputesPage />);
+    render(<ToastProvider><DisputesPage /></ToastProvider>);
 
     await waitFor(() => {
       expect(screen.getByText("Audit Contract")).toBeInTheDocument();
@@ -334,7 +335,7 @@ describe("Disputes page filter tab toggling", () => {
       eligibleJobs: [],
     });
 
-    render(<DisputesPage />);
+    render(<ToastProvider><DisputesPage /></ToastProvider>);
 
     await waitFor(() => {
       expect(screen.getByText("Audit Contract")).toBeInTheDocument();
@@ -392,7 +393,7 @@ describe("Disputes page filter tab toggling", () => {
       eligibleJobs: [],
     });
 
-    render(<DisputesPage />);
+    render(<ToastProvider><DisputesPage /></ToastProvider>);
 
     await waitFor(() => {
       expect(screen.getByText("Audit Contract")).toBeInTheDocument();

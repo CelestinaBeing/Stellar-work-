@@ -3,9 +3,14 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useModalFocusTrap } from "@/lib/modal";
 import { useWallet } from "@/lib/wallet-context";
+import { useToast } from "@/components/ToastProvider";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import EmptyState from "@/components/EmptyState";
 import NoResultsState from "@/components/NoResultsState";
 import SectionCard from "@/components/SectionCard";
+import { toXlm } from "@/lib/format";
+import { isConfirmSuppressed, CONFIRM_KEYS } from "@/lib/confirm-prefs";
+import { raiseDispute as contractRaiseDispute, resolveDispute as contractResolveDispute } from "@/lib/contract";
 import {
   loadDisputesPageData,
   type Dispute,
@@ -29,8 +34,8 @@ function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
-function fmtUSD(n: number) {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
+function fmtAmount(n: number): string {
+  return `${toXlm(n)} XLM`;
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -140,7 +145,7 @@ function RaiseDisputeModal({
               className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
             >
               {jobs.map(j => (
-                <option key={j.id} value={j.id}>{j.title} — {fmtUSD(j.amount)}</option>
+                <option key={j.id} value={j.id}>{j.title} — {fmtAmount(j.amount)}</option>
               ))}
             </select>
           </div>
@@ -276,7 +281,7 @@ function ResolveModal({
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs font-medium text-slate-700">Fund Split</label>
-              <span className="text-xs text-slate-500">Total: {fmtUSD(dispute.amount)}</span>
+              <span className="text-xs text-slate-500">Total: {fmtAmount(dispute.amount)}</span>
             </div>
 
             {/* Split bar */}
@@ -311,12 +316,12 @@ function ResolveModal({
             <div className="mt-2 grid grid-cols-2 gap-2">
               <div className="rounded-lg bg-blue-50 px-3 py-2 ring-1 ring-blue-100">
                 <p className="text-[10px] text-blue-500 font-medium uppercase tracking-wide">Client</p>
-                <p className="text-sm font-semibold text-blue-700 mt-0.5">{fmtUSD(dispute.amount * clientShare / 100)}</p>
+                <p className="text-sm font-semibold text-blue-700 mt-0.5">{fmtAmount(Math.floor(dispute.amount * clientShare / 100))}</p>
                 <p className="text-[10px] text-blue-400">{dispute.client}</p>
               </div>
               <div className="rounded-lg bg-violet-50 px-3 py-2 ring-1 ring-violet-100">
                 <p className="text-[10px] text-violet-500 font-medium uppercase tracking-wide">Freelancer</p>
-                <p className="text-sm font-semibold text-violet-700 mt-0.5">{fmtUSD(dispute.amount * freelancerShare / 100)}</p>
+                <p className="text-sm font-semibold text-violet-700 mt-0.5">{fmtAmount(Math.floor(dispute.amount * freelancerShare / 100))}</p>
                 <p className="text-[10px] text-violet-400">{dispute.freelancer}</p>
               </div>
             </div>
@@ -395,7 +400,7 @@ function DisputeCard({
         </div>
 
         <div className="text-right shrink-0">
-          <p className="text-base font-bold text-slate-900">{fmtUSD(dispute.amount)}</p>
+          <p className="text-base font-bold text-slate-900">{fmtAmount(dispute.amount)}</p>
           <p className="text-xs text-slate-400">{fmtDate(dispute.raisedAt)}</p>
         </div>
       </div>
@@ -421,13 +426,13 @@ function DisputeCard({
               <div className="flex gap-3">
                 <div>
                   <p className="text-[10px] text-emerald-500">Client received</p>
-                  <p className="text-sm font-bold text-emerald-700">{fmtUSD(dispute.amount * dispute.resolution.clientShare / 100)}</p>
+                  <p className="text-sm font-bold text-emerald-700">{fmtAmount(Math.floor(dispute.amount * dispute.resolution.clientShare / 100))}</p>
                   <p className="text-[10px] text-emerald-400">{dispute.resolution.clientShare}%</p>
                 </div>
                 <div className="w-px bg-emerald-200" />
                 <div>
                   <p className="text-[10px] text-emerald-500">Freelancer received</p>
-                  <p className="text-sm font-bold text-emerald-700">{fmtUSD(dispute.amount * dispute.resolution.freelancerShare / 100)}</p>
+                  <p className="text-sm font-bold text-emerald-700">{fmtAmount(Math.floor(dispute.amount * dispute.resolution.freelancerShare / 100))}</p>
                   <p className="text-[10px] text-emerald-400">{dispute.resolution.freelancerShare}%</p>
                 </div>
               </div>
@@ -472,7 +477,9 @@ export default function DisputesPage() {
 
   const [showRaiseModal, setShowRaiseModal] = useState(false);
   const [resolveTarget, setResolveTarget] = useState<Dispute | null>(null);
-  const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
+  const [showRaiseConfirm, setShowRaiseConfirm] = useState(false);
+  const [pendingDisputeJobId, setPendingDisputeJobId] = useState<string | null>(null);
+  const { showSuccess, showError } = useToast();
 
   // Sync role with wallet/admin status
   useEffect(() => {
@@ -501,7 +508,7 @@ export default function DisputesPage() {
     setLoading(true);
     setError("");
     try {
-      const data = await loadDisputesPageData();
+      const data = await loadDisputesPageData(wallet);
       setDisputes(data.disputes);
       setEligibleJobs(data.eligibleJobs);
     } catch {
@@ -515,13 +522,6 @@ export default function DisputesPage() {
     void loadDisputes();
   }, [loadDisputes, role]);
 
-  // Toast auto-dismiss
-  useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(null), 3500);
-    return () => clearTimeout(t);
-  }, [toast]);
-
   const filteredDisputes = disputes.filter(d => {
     if (filter === "active") return ["Active", "UnderReview", "PendingEvidence"].includes(d.status);
     if (filter === "resolved") return ["Resolved", "Closed"].includes(d.status);
@@ -529,46 +529,55 @@ export default function DisputesPage() {
   });
 
   async function handleRaiseDispute(jobId: string, reason: string, evidence: string) {
-    // Simulate SC-1 smart contract call
-    await new Promise(res => setTimeout(res, 1200));
-    const job = eligibleJobs.find(j => j.id === jobId)!;
-    const newDispute: Dispute = {
-      id: `D-00${disputes.length + 1}`,
-      jobId,
-      jobTitle: job.title,
-      client: role === "client" ? "You" : job.counterparty,
-      freelancer: role === "freelancer" ? "You" : job.counterparty,
-      amount: job.amount,
-      raisedBy: role as "client" | "freelancer",
-      raisedAt: new Date().toISOString(),
-      status: "Active",
-      reason,
-      evidence,
-    };
-    setDisputes(prev => [newDispute, ...prev]);
-    setToast({ msg: "Dispute raised. Funds held in escrow.", type: "success" });
+    if (!wallet) return;
+    try {
+      await contractRaiseDispute(wallet, jobId);
+      const job = eligibleJobs.find(j => j.id === jobId)!;
+      const newDispute: Dispute = {
+        id: `D-${String(disputes.length + 1).padStart(3, "0")}`,
+        jobId,
+        jobTitle: job.title,
+        client: role === "client" ? "You" : job.counterparty,
+        freelancer: role === "freelancer" ? "You" : job.counterparty,
+        amount: job.amount,
+        raisedBy: role as "client" | "freelancer",
+        raisedAt: new Date().toISOString(),
+        status: "Active",
+        reason,
+        evidence,
+      };
+      setDisputes(prev => [newDispute, ...prev]);
+      showSuccess("Dispute raised. Funds held in escrow.");
+    } catch {
+      showError("Failed to raise dispute. Please try again.");
+    }
   }
 
   async function handleResolve(id: string, clientShare: number, note: string) {
-    // Simulate SC-2 smart contract call
-    await new Promise(res => setTimeout(res, 1200));
-    setDisputes(prev =>
-      prev.map(d =>
-        d.id === id
-          ? {
-              ...d,
-              status: "Resolved" as DisputeStatus,
-              resolution: {
-                resolvedAt: new Date().toISOString(),
-                clientShare,
-                freelancerShare: 100 - clientShare,
-                note,
-              },
-            }
-          : d
-      )
-    );
-    setToast({ msg: "Dispute resolved and funds disbursed.", type: "success" });
+    try {
+      const jobId = disputes.find(d => d.id === id)?.jobId;
+      if (!jobId) return;
+      await contractResolveDispute(jobId, clientShare);
+      setDisputes(prev =>
+        prev.map(d =>
+          d.id === id
+            ? {
+                ...d,
+                status: "Resolved" as DisputeStatus,
+                resolution: {
+                  resolvedAt: new Date().toISOString(),
+                  clientShare,
+                  freelancerShare: 100 - clientShare,
+                  note,
+                },
+              }
+            : d
+        )
+      );
+      showSuccess("Dispute resolved and funds disbursed.");
+    } catch {
+      showError("Failed to resolve dispute. Please try again.");
+    }
   }
 
   const activeCount = disputes.filter(d => ["Active", "UnderReview", "PendingEvidence"].includes(d.status)).length;
@@ -596,20 +605,6 @@ export default function DisputesPage() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* Toast */}
-      {toast && (
-        <div
-          className={`fixed top-4 right-4 z-[100] flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-medium shadow-lg ring-1 transition-all ${
-            toast.type === "success"
-              ? "bg-emerald-50 text-emerald-800 ring-emerald-200"
-              : "bg-red-50 text-red-800 ring-red-200"
-          }`}
-        >
-          <span>{toast.type === "success" ? "✓" : "✕"}</span>
-          {toast.msg}
-        </div>
-      )}
-
       <div className="mx-auto max-w-3xl px-4 py-8">
         {/* Page header */}
         <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
@@ -638,9 +633,16 @@ export default function DisputesPage() {
 
             {role !== "admin" && (
               <button
-                onClick={() => setShowRaiseModal(true)}
+                onClick={() => {
+                  if (isConfirmSuppressed(CONFIRM_KEYS.raiseDispute)) {
+                    setShowRaiseModal(true);
+                  } else {
+                    setShowRaiseConfirm(true);
+                  }
+                }}
                 disabled={eligibleJobs.length === 0}
                 className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60 transition-colors"
+                aria-haspopup="dialog"
               >
                 + Raise Dispute
               </button>
@@ -720,6 +722,26 @@ export default function DisputesPage() {
       </div>
 
       {/* Modals */}
+      {showRaiseConfirm && (
+        <ConfirmDialog
+          open={true}
+          title="Raise a dispute?"
+          description="Raising a dispute will freeze the escrowed funds until an admin resolves the case. Both parties will be notified."
+          consequences={[
+            "Funds remain locked in escrow — neither party can withdraw.",
+            "The job moves to Disputed status.",
+            "An admin must resolve the dispute before funds are released.",
+          ]}
+          confirmLabel="Yes, raise dispute"
+          variant="warning"
+          suppressKey={CONFIRM_KEYS.raiseDispute}
+          onConfirm={() => {
+            setShowRaiseConfirm(false);
+            setShowRaiseModal(true);
+          }}
+          onCancel={() => setShowRaiseConfirm(false)}
+        />
+      )}
       {showRaiseModal && (
         <RaiseDisputeModal
           jobs={eligibleJobs}

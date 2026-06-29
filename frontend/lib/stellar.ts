@@ -4,13 +4,13 @@ import {
   Account,
   BASE_FEE,
   Contract,
-  Keypair,
   Networks,
   nativeToScVal,
   rpc,
   scValToNative,
   TransactionBuilder,
   xdr,
+  Horizon,
 } from "@stellar/stellar-sdk";
 import {
   getAddress,
@@ -64,6 +64,23 @@ export async function getPublicKey(): Promise<string | null> {
   }
   const addr = await getAddress();
   return addr.error ? null : addr.address;
+}
+
+export async function getNativeBalance(publicKey: string): Promise<string> {
+  try {
+    const horizonUrl =
+      getNetwork() === "mainnet"
+        ? "https://horizon.stellar.org"
+        : "https://horizon-testnet.stellar.org";
+    // We use Horizon.Server to get balances. The method is loadAccount.
+    const server = new Horizon.Server(horizonUrl);
+    const account = await server.loadAccount(publicKey);
+    const nativeBalance = account.balances.find((b) => b.asset_type === "native");
+    return nativeBalance ? nativeBalance.balance : "0";
+  } catch (e) {
+    console.error("Error fetching balance:", e);
+    return "0";
+  }
 }
 
 export async function signTransaction(xdrValue: string): Promise<string> {
@@ -137,11 +154,11 @@ export async function callContract(
   const signedTx = TransactionBuilder.fromXDR(signedXdr, networkPassphrase);
   const sent = await server.sendTransaction(signedTx);
 
-  if (sent.status === rpc.Api.SendTransactionStatus.ERROR) {
+  if (sent.status === "ERROR") {
     throw new Error(sent.errorResult?.toXDR().toString() ?? "Contract invocation failed.");
   }
 
-  if (sent.status === rpc.Api.SendTransactionStatus.PENDING) {
+  if (sent.status === "PENDING") {
     const pollTimeout = options?.pollTimeout ?? DEFAULT_POLL_TIMEOUT;
     const pollInterval = DEFAULT_POLL_INTERVAL;
     const startTime = Date.now();

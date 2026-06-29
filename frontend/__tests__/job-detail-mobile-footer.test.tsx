@@ -36,16 +36,44 @@ vi.mock("@/lib/contract", () => ({
   submitWork: vi.fn(),
   approveWork: vi.fn(),
   cancelJob: vi.fn(),
+  freelancerCancelJob: vi.fn(),
+  getDescriptionCid: vi.fn(),
+  storeDescriptionCid: vi.fn(),
+}));
+
+// Mock IPFS service
+vi.mock("@/lib/ipfs-service", () => ({
+  uploadToIpfs: vi.fn(),
+  fetchFromIpfs: vi.fn(),
 }));
 
 // Mock format utilities
 vi.mock("@/lib/format", () => ({
   toXlm: (value: string) => `${Number(value) / 10000000}`,
+  formatDeadline: (deadline: string) => {
+    if (deadline === "0") return undefined;
+    return { isPast: false, relative: "in 30 days", exact: "2025-07-26" };
+  },
 }));
 
 // Mock stellar utilities
 vi.mock("@/lib/stellar", () => ({
   getExplorerTxUrl: (hash: string) => `https://stellar.expert/tx/${hash}`,
+}));
+
+vi.mock("@/lib/notifications-context", () => ({
+  useNotifications: () => ({
+    notifications: [],
+    unreadCount: 0,
+    addNotification: vi.fn(),
+    markAsSeen: vi.fn(),
+    markAllAsSeen: vi.fn(),
+    preferences: { job_accepted: true, work_submitted: true, work_approved: true, job_cancelled: true, dispute_raised: true, dispute_resolved: true },
+    setPreference: vi.fn(),
+    clearNotifications: vi.fn(),
+  }),
+  NotificationProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  getEventLabel: (event: string) => event,
 }));
 
 describe("Job Detail Mobile Footer", () => {
@@ -243,7 +271,7 @@ describe("Job Detail Mobile Footer", () => {
 
     // Mock acceptJob to simulate loading state
     const { acceptJob } = await import("@/lib/contract");
-    vi.mocked(acceptJob).mockImplementation(() => new Promise(() => {})); // Never resolves
+    vi.mocked(acceptJob).mockImplementation(() => new Promise(() => { void 0; })); // Never resolves
 
     const JobDetailPage = (await import("@/app/job/[id]/page")).default;
     render(<JobDetailPage />);

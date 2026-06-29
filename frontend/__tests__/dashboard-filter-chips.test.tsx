@@ -10,6 +10,7 @@ const mockApproveWork = vi.fn();
 const mockCancelJob = vi.fn();
 const mockSubmitWork = vi.fn();
 const mockEnforceDeadline = vi.fn();
+const mockFreelancerCancelJob = vi.fn();
 
 vi.mock("@/lib/contract", () => ({
   getJob: (...args: unknown[]) => mockGetJob(...args),
@@ -19,6 +20,9 @@ vi.mock("@/lib/contract", () => ({
   cancelJob: (...args: unknown[]) => mockCancelJob(...args),
   submitWork: (...args: unknown[]) => mockSubmitWork(...args),
   enforceDeadline: (...args: unknown[]) => mockEnforceDeadline(...args),
+  freelancerCancelJob: (...args: unknown[]) => mockFreelancerCancelJob(...args),
+  getDescriptionCid: vi.fn(),
+  storeDescriptionCid: vi.fn(),
 }));
 
 vi.mock("@/lib/wallet-context", () => ({
@@ -33,6 +37,21 @@ vi.mock("@/components/ToastProvider", () => ({
     showSuccess: vi.fn(),
     showError: vi.fn(),
   }),
+}));
+
+vi.mock("@/lib/notifications-context", () => ({
+  useNotifications: () => ({
+    notifications: [],
+    unreadCount: 0,
+    addNotification: vi.fn(),
+    markAsSeen: vi.fn(),
+    markAllAsSeen: vi.fn(),
+    preferences: { job_accepted: true, work_submitted: true, work_approved: true, job_cancelled: true, dispute_raised: true, dispute_resolved: true },
+    setPreference: vi.fn(),
+    clearNotifications: vi.fn(),
+  }),
+  NotificationProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  getEventLabel: (event: string) => event,
 }));
 
 describe("Dashboard filter chip toggling", () => {

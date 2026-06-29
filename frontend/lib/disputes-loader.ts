@@ -37,80 +37,44 @@ export type DisputesPageData = {
   eligibleJobs: EligibleJob[];
 };
 
-const MOCK_DISPUTES: Dispute[] = [
-  {
-    id: "D-001",
-    jobId: "J-104",
-    jobTitle: "Smart Contract Audit — DeFi Protocol",
-    client: "BlockVentures LLC",
-    freelancer: "0xDev.eth",
-    amount: 4200,
-    raisedBy: "client",
-    raisedAt: "2025-04-18T09:22:00Z",
-    status: "UnderReview",
-    reason: "Delivered audit missed three critical vulnerabilities found by a third party.",
-    evidence: "Audit report diff, third-party findings attached.",
-  },
-  {
-    id: "D-002",
-    jobId: "J-098",
-    jobTitle: "NFT Marketplace Frontend",
-    client: "ArtChain Studio",
-    freelancer: "pixel.labs",
-    amount: 2800,
-    raisedBy: "freelancer",
-    raisedAt: "2025-04-12T14:05:00Z",
-    status: "Active",
-    reason: "Client has not approved final deliverable despite meeting all specs.",
-    evidence: "Spec doc signed off, delivery screenshots included.",
-  },
-  {
-    id: "D-003",
-    jobId: "J-091",
-    jobTitle: "Tokenomics Whitepaper",
-    client: "NovaCoin Foundation",
-    freelancer: "dr.tokenomics",
-    amount: 1500,
-    raisedBy: "client",
-    raisedAt: "2025-03-30T11:40:00Z",
-    status: "Resolved",
-    reason: "Whitepaper contained significant factual errors requiring full revision.",
-    resolution: {
-      resolvedAt: "2025-04-08T16:20:00Z",
-      clientShare: 40,
-      freelancerShare: 60,
-      note: "Partial refund agreed — work was largely complete but needed corrections.",
-    },
-  },
-  {
-    id: "D-004",
-    jobId: "J-087",
-    jobTitle: "DAO Governance Module",
-    client: "Collective3",
-    freelancer: "rustchain.dev",
-    amount: 7500,
-    raisedBy: "freelancer",
-    raisedAt: "2025-03-22T08:15:00Z",
-    status: "Closed",
-    reason: "Payment withheld after scope expansion was verbally agreed.",
-    resolution: {
-      resolvedAt: "2025-04-01T10:00:00Z",
-      clientShare: 10,
-      freelancerShare: 90,
-      note: "Evidence of scope expansion accepted. Freelancer awarded full revised amount.",
-    },
-  },
-];
+export async function loadDisputesPageData(wallet: string): Promise<DisputesPageData> {
+  const { getJobCount, getJob } = await import("@/lib/contract");
+  const count = await getJobCount();
 
-const MOCK_ELIGIBLE_JOBS: EligibleJob[] = [
-  { id: "J-112", title: "Solidity Gas Optimisation", counterparty: "GasHawks Inc.", amount: 960 },
-  { id: "J-108", title: "Web3 Dashboard Redesign", counterparty: "UX3 Studio", amount: 1800 },
-];
+  const disputes: Dispute[] = [];
+  const eligibleJobs: EligibleJob[] = [];
+  const now = new Date().toISOString();
 
-export async function loadDisputesPageData(): Promise<DisputesPageData> {
-  await new Promise((resolve) => setTimeout(resolve, 800));
-  return {
-    disputes: MOCK_DISPUTES,
-    eligibleJobs: MOCK_ELIGIBLE_JOBS,
-  };
+  for (let id = 1; id <= count; id++) {
+    const job = await getJob(String(id));
+    if (!job) continue;
+
+    if (job.client !== wallet && job.freelancer !== wallet) continue;
+
+    if (job.status === "Disputed") {
+      disputes.push({
+        id: `D-${String(id).padStart(3, "0")}`,
+        jobId: String(id),
+        jobTitle: `Job #${id}`,
+        client: job.client,
+        freelancer: job.freelancer ?? "unknown",
+        amount: Number(job.amount),
+        raisedBy: job.client === wallet ? "client" : "freelancer",
+        raisedAt: now,
+        status: "Active",
+        reason: "Dispute raised on-chain. See job details for more information.",
+      });
+    }
+
+    if (job.status === "InProgress" || job.status === "SubmittedForReview") {
+      eligibleJobs.push({
+        id: String(id),
+        title: `Job #${id}`,
+        counterparty: job.client === wallet ? (job.freelancer ?? "unknown") : job.client,
+        amount: Number(job.amount),
+      });
+    }
+  }
+
+  return { disputes, eligibleJobs };
 }

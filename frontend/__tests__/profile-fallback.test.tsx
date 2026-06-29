@@ -25,6 +25,9 @@ vi.mock("@/lib/wallet-context", () => ({
 vi.mock("@/lib/contract", () => ({
   getJob: vi.fn(),
   getJobCount: vi.fn().mockResolvedValue(0),
+  freelancerCancelJob: vi.fn(),
+  getDescriptionCid: vi.fn(),
+  storeDescriptionCid: vi.fn(),
 }));
 
 // Mock format utilities

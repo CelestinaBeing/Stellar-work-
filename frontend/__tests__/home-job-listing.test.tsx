@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import HomePage from "@/app/page";
 
@@ -10,6 +10,14 @@ vi.mock("@/lib/contract", () => ({
   getJobCount: (...args: unknown[]) => mockGetJobCount(...args),
   getJob: (...args: unknown[]) => mockGetJob(...args),
   acceptJob: vi.fn(),
+  freelancerCancelJob: vi.fn(),
+  getDescriptionCid: vi.fn(),
+  storeDescriptionCid: vi.fn(),
+}));
+
+vi.mock("@/lib/ipfs-service", () => ({
+  uploadToIpfs: vi.fn(),
+  fetchFromIpfs: vi.fn(),
 }));
 
 vi.mock("@/lib/wallet-context", () => ({
@@ -17,6 +25,21 @@ vi.mock("@/lib/wallet-context", () => ({
     wallet: null,
     connectWallet: vi.fn(),
   }),
+}));
+
+vi.mock("@/lib/notifications-context", () => ({
+  useNotifications: () => ({
+    notifications: [],
+    unreadCount: 0,
+    addNotification: vi.fn(),
+    markAsSeen: vi.fn(),
+    markAllAsSeen: vi.fn(),
+    preferences: { job_accepted: true, work_submitted: true, work_approved: true, job_cancelled: true, dispute_raised: true, dispute_resolved: true },
+    setPreference: vi.fn(),
+    clearNotifications: vi.fn(),
+  }),
+  NotificationProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  getEventLabel: (event: string) => event,
 }));
 
 describe("Home page job listing after getJobCount", () => {

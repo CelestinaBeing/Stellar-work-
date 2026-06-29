@@ -6,11 +6,27 @@ import InfoTooltip from "@/components/InfoTooltip";
 import NoResultsState from "@/components/NoResultsState";
 import JobCardSkeleton from "@/components/JobCardSkeleton";
 import SectionCard from "@/components/SectionCard";
-import { acceptJob, getJob, getJobCount } from "@/lib/contract";
-import { formatDeadline, toXlm } from "@/lib/format";
+import JobFilterPanel, { DEFAULT_FILTERS, type JobFilters } from "@/components/JobFilterPanel";
+import { acceptJob, getDescriptionCid, getJob, getJobCount } from "@/lib/contract";
+import { fetchFromIpfs } from "@/lib/ipfs-service";
+import { useNotifications } from "@/lib/notifications-context";
+import {
+  FIAT_CURRENCIES,
+  fetchXlmFiatRates,
+  formatDeadline,
+  formatXlmFiatRateTooltip,
+  formatXlmWithFiat,
+  getCachedXlmFiatRates,
+  getPreferredFiatCurrency,
+  savePreferredFiatCurrency,
+  toXlm,
+  type FiatCurrency,
+  type XlmFiatRateCache,
+} from "@/lib/format";
 import {
   clearRecentSearches,
   loadRecentSearches,
+  removeRecentSearch,
   saveRecentSearches,
   updateRecentSearches,
 } from "@/lib/recent-searches";
@@ -20,6 +36,7 @@ import type { Job } from "@/lib/types";
 import { useWallet } from "@/lib/wallet-context";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 
 const BOOKMARK_STORAGE_KEY = "stellarwork:bookmarked-jobs";
 const VIEW_MODE_STORAGE_KEY = "stellarwork:jobs-view-mode";
@@ -34,6 +51,7 @@ function readViewMode(): JobsViewMode {
 
 export default function HomePage() {
   const { wallet } = useWallet();
+  const { addNotification } = useNotifications();
   const [jobs, setJobs] = useState<Array<{ id: number; job: Job }>>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -45,18 +63,59 @@ export default function HomePage() {
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
   const [showBookmarkedOnly, setShowBookmarkedOnly] = useState(false);
   const [bookmarkedIds, setBookmarkedIds] = useState<number[]>([]);
+  const [animatingBookmarkId, setAnimatingBookmarkId] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [recentSearches, setRecentSearches] = useState<string[] | null>(null);
+  const [recentSearchesOpen, setRecentSearchesOpen] = useState(false);
   const [resultsAnnouncement, setResultsAnnouncement] = useState("");
   const [lastAnnouncedSignature, setLastAnnouncedSignature] = useState("");
   const [newJobIds, setNewJobIds] = useState<Set<number>>(() => new Set());
   const seenJobIdsRef = useRef<Set<number>>(new Set());
   const isInitialLoadRef = useRef(true);
   const [viewMode, setViewMode] = useState<JobsViewMode>("grid");
+  const [fiatCurrency, setFiatCurrency] = useState<FiatCurrency>("USD");
+  const [fiatRates, setFiatRates] = useState<XlmFiatRateCache | null>(null);
+  const [fiatRateError, setFiatRateError] = useState<string | null>(null);
+  const [descriptions, setDescriptions] = useState<Record<string, string>>({});
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const [advancedFilters, setAdvancedFilters] = useState<JobFilters>(() => {
+    if (typeof window === "undefined") return DEFAULT_FILTERS;
+    const params = new URLSearchParams(window.location.search);
+    return {
+      minAmount: params.get("minAmount") ?? "",
+      maxAmount: params.get("maxAmount") ?? "",
+      dateRange: (params.get("dateRange") as JobFilters["dateRange"]) ?? "all",
+      freelancerStatus: (params.get("freelancerStatus") as JobFilters["freelancerStatus"]) ?? "all",
+    };
+  });
 
   useEffect(() => {
     setViewMode(readViewMode());
+    setFiatCurrency(getPreferredFiatCurrency());
+    setFiatRates(getCachedXlmFiatRates());
   }, []);
+
+  useEffect(() => {
+    savePreferredFiatCurrency(fiatCurrency);
+    let cancelled = false;
+    setFiatRateError(null);
+
+    fetchXlmFiatRates()
+      .then((cache) => {
+        if (!cancelled) setFiatRates(cache);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setFiatRateError("Fiat rates are unavailable; showing XLM only where needed.");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fiatCurrency]);
 
   useEffect(() => {
     if (viewMode === "grid") {
@@ -103,6 +162,17 @@ export default function HomePage() {
     saveRecentSearches(recentSearches);
   }, [recentSearches]);
 
+  // Sync advanced filters to URL query params for bookmarking.
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (advancedFilters.minAmount) params.set("minAmount", advancedFilters.minAmount);
+    if (advancedFilters.maxAmount) params.set("maxAmount", advancedFilters.maxAmount);
+    if (advancedFilters.dateRange !== "all") params.set("dateRange", advancedFilters.dateRange);
+    if (advancedFilters.freelancerStatus !== "all") params.set("freelancerStatus", advancedFilters.freelancerStatus);
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }, [advancedFilters, pathname, router]);
+
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -148,6 +218,27 @@ export default function HomePage() {
           item !== null && item.job.status === "Open",
       );
 
+      const descMap: Record<string, string> = {};
+      for (const { job } of fetched) {
+        const hash = job.description_hash;
+        const stored = localStorage.getItem(`job-desc:${hash}`);
+        if (stored) {
+          descMap[hash] = stored;
+          continue;
+        }
+        try {
+          const cid = await getDescriptionCid(hash);
+          if (cid) {
+            const text = await fetchFromIpfs(cid);
+            descMap[hash] = text;
+            localStorage.setItem(`job-desc:${hash}`, text);
+          }
+        } catch {
+          // IPFS fetch failed, description will show fallback text
+        }
+      }
+      setDescriptions(descMap);
+
       const incomingIds = fetched.map(({ id }) => id);
       if (!isInitialLoadRef.current) {
         const addedIds = incomingIds.filter((id) => !seenJobIdsRef.current.has(id));
@@ -178,29 +269,61 @@ export default function HomePage() {
 
   const normalizedSearchTerm = searchTerm.trim().toLowerCase();
 
+  const getDescription = useCallback((hash: string): string => {
+    if (descriptions[hash]) return descriptions[hash];
+    const stored = localStorage.getItem(`job-desc:${hash}`);
+    if (stored) return stored;
+    return "Description unavailable (posted from another device)";
+  }, [descriptions]);
+
   const visibleJobs = useMemo(() => {
     const bookmarkedJobs = showBookmarkedOnly
       ? jobs.filter(({ id }) => bookmarkedIds.includes(id))
       : jobs;
 
-    if (!normalizedSearchTerm) {
-      return bookmarkedJobs;
-    }
+    const now = Math.floor(Date.now() / 1000);
+    const dateThresholds: Record<string, number> = {
+      "24h": now - 86400,
+      "7d": now - 7 * 86400,
+      "30d": now - 30 * 86400,
+    };
 
-    return bookmarkedJobs.filter(({ id, job }) => {
-      const description = getDescription(job.description_hash).toLowerCase();
-      const amount = toXlm(job.amount).toLowerCase();
-      const freelancer = job.freelancer?.toLowerCase() ?? "";
-      return [
-        String(id),
-        job.description_hash.toLowerCase(),
-        description,
-        amount,
-        job.client.toLowerCase(),
-        freelancer,
-      ].some((value) => value.includes(normalizedSearchTerm));
+    const afterSearch = normalizedSearchTerm
+      ? bookmarkedJobs.filter(({ id, job }) => {
+          const description = getDescription(job.description_hash).toLowerCase();
+          const amount = toXlm(job.amount).toLowerCase();
+          const freelancer = job.freelancer?.toLowerCase() ?? "";
+          return [
+            String(id),
+            job.description_hash.toLowerCase(),
+            description,
+            amount,
+            job.client.toLowerCase(),
+            freelancer,
+          ].some((value) => value.includes(normalizedSearchTerm));
+        })
+      : bookmarkedJobs;
+
+    return afterSearch.filter(({ job }) => {
+      const { minAmount, maxAmount, dateRange, freelancerStatus } = advancedFilters;
+      const amountXlm = parseFloat(toXlm(job.amount));
+
+      if (minAmount !== "" && !Number.isNaN(parseFloat(minAmount))) {
+        if (amountXlm < parseFloat(minAmount)) return false;
+      }
+      if (maxAmount !== "" && !Number.isNaN(parseFloat(maxAmount))) {
+        if (amountXlm > parseFloat(maxAmount)) return false;
+      }
+      if (dateRange !== "all") {
+        const threshold = dateThresholds[dateRange];
+        if (threshold !== undefined && Number(job.created_at) < threshold) return false;
+      }
+      if (freelancerStatus === "unassigned" && job.freelancer) return false;
+      if (freelancerStatus === "assigned" && !job.freelancer) return false;
+
+      return true;
     });
-  }, [bookmarkedIds, jobs, normalizedSearchTerm, showBookmarkedOnly]);
+  }, [advancedFilters, bookmarkedIds, getDescription, jobs, normalizedSearchTerm, showBookmarkedOnly]);
 
   useEffect(() => {
     if (loading) return;
@@ -211,12 +334,6 @@ export default function HomePage() {
     );
     setLastAnnouncedSignature(currentSignature);
   }, [lastAnnouncedSignature, loading, normalizedSearchTerm, showBookmarkedOnly, visibleJobs]);
-
-  function getDescription(hash: string): string {
-    const stored = localStorage.getItem(`job-desc:${hash}`);
-    if (stored) return stored;
-    return "Description unavailable (posted from another device)";
-  }
 
   function markJobViewed(id: number) {
     setNewJobIds((prev) => {
@@ -232,13 +349,19 @@ export default function HomePage() {
     const term = searchTerm.trim();
     if (!term) return;
     setRecentSearches((current) => updateRecentSearches(current ?? [], term));
+    setRecentSearchesOpen(false);
     setPage(1);
   };
 
   const handleRecentSearchSelect = (term: string) => {
     setSearchTerm(term);
     setRecentSearches((current) => updateRecentSearches(current ?? [], term));
+    setRecentSearchesOpen(false);
     setPage(1);
+  };
+
+  const handleRemoveRecentSearch = (term: string) => {
+    setRecentSearches((current) => removeRecentSearch(current ?? [], term));
   };
 
   const handleClearSearch = () => {
@@ -248,6 +371,7 @@ export default function HomePage() {
 
   const handleClearSearchHistory = () => {
     setRecentSearches([]);
+    setRecentSearchesOpen(false);
     clearRecentSearches();
   };
 
@@ -255,6 +379,7 @@ export default function HomePage() {
     () => visibleJobs.filter(({ id }) => newJobIds.has(id)).length,
     [newJobIds, visibleJobs],
   );
+  const fiatTooltip = formatXlmFiatRateTooltip(fiatCurrency, fiatRates?.rates, fiatRates?.fetchedAt);
 
   return (
     <section className="space-y-6">
@@ -281,8 +406,8 @@ export default function HomePage() {
               onClick={() => void refresh()}
               className="rounded-md border border-slate-300 bg-white px-5 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors text-center"
               disabled={loading}
-            >
-              {loading ? "Refreshing..." : "Browse Jobs"}
+          >
+            {loading ? "Refreshing..." : "Browse Jobs"}
             </button>
           </div>
         </div>
@@ -379,25 +504,118 @@ export default function HomePage() {
         )
       )}
 
+      <JobFilterPanel
+        filters={advancedFilters}
+        onChange={(f) => { setAdvancedFilters(f); setPage(1); }}
+        resultCount={visibleJobs.length}
+      />
+
       <SectionCard
         title="Jobs Display"
         description="Default sort is newest first."
       >
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-slate-200 p-3">
+          <label className="text-sm font-medium text-slate-700">
+            Fiat currency
+            <select
+              value={fiatCurrency}
+              onChange={(event) => setFiatCurrency(event.target.value as FiatCurrency)}
+              className="ml-2 rounded-md border border-slate-300 bg-white px-2 py-1 text-sm"
+              title={fiatTooltip}
+            >
+              {FIAT_CURRENCIES.map((currency) => (
+                <option key={currency} value={currency}>
+                  {currency}
+                </option>
+              ))}
+            </select>
+          </label>
+          {fiatRateError && <p className="text-xs text-amber-700">{fiatRateError}</p>}
+        </div>
         <form onSubmit={handleSearchSubmit} className="space-y-3 rounded-md border border-slate-200 p-3">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
-            <label className="flex-1 text-sm text-slate-600">
-              <span className="block font-medium text-slate-700">Search jobs</span>
+            <div
+              className="relative flex-1 text-sm text-slate-600"
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  setRecentSearchesOpen(false);
+                }
+              }}
+            >
+              <label htmlFor="job-search" className="block font-medium text-slate-700">
+                Search jobs
+              </label>
               <input
+                id="job-search"
                 type="search"
                 value={searchTerm}
                 onChange={(event) => {
                   setSearchTerm(event.target.value);
                   setPage(1);
                 }}
+                onFocus={() => setRecentSearchesOpen((recentSearches?.length ?? 0) > 0)}
                 placeholder="Search by ID, description, wallet, or amount"
                 className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2"
+                aria-controls="recent-searches-listbox"
+                aria-expanded={recentSearchesOpen}
+                aria-haspopup="listbox"
               />
-            </label>
+              {recentSearchesOpen && (recentSearches?.length ?? 0) > 0 && (
+                <div className="absolute z-20 mt-2 w-full rounded-md border border-slate-200 bg-white p-2 shadow-lg">
+                  <div
+                    id="recent-searches-listbox"
+                    role="listbox"
+                    aria-label="Recent searches"
+                    className="space-y-1"
+                  >
+                    {(recentSearches ?? []).map((term) => (
+                      <div
+                        key={term}
+                        role="option"
+                        aria-selected={searchTerm.trim().toLowerCase() === term.toLowerCase()}
+                        className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => handleRecentSearchSelect(term)}
+                          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                        >
+                                                    <svg
+                            aria-hidden="true"
+                            viewBox="0 0 24 24"
+                            className="h-4 w-4 shrink-0 text-slate-400"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <circle cx="12" cy="12" r="9" />
+                            <path d="M12 7v5l3 2" />
+                          </svg>
+                          <span className="truncate">{term}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveRecentSearch(term)}
+                          className="rounded px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                          aria-label={`Remove ${term} from recent searches`}
+                        >
+                          X
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleClearSearchHistory}
+                    className="mt-2 w-full border-t border-slate-100 pt-2 text-left text-xs font-medium text-slate-600 hover:text-slate-900"
+                  >
+                    Clear history
+                  </button>
+                </div>
+              )}
+            </div>
             <div className="flex flex-wrap gap-2">
               <button
                 type="submit"
@@ -416,38 +634,6 @@ export default function HomePage() {
               </button>
             </div>
           </div>
-          {(recentSearches?.length ?? 0) > 0 && (
-            <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                  Recent searches
-                </p>
-                <button
-                  type="button"
-                  onClick={handleClearSearchHistory}
-                  className="text-xs font-medium text-slate-600 hover:text-slate-900"
-                >
-                  Clear history
-                </button>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {(recentSearches ?? []).map((term) => (
-                  <button
-                    key={term}
-                    type="button"
-                    onClick={() => handleRecentSearchSelect(term)}
-                    className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-                      searchTerm.trim().toLowerCase() === term.toLowerCase()
-                        ? "border-slate-900 bg-slate-900 text-white"
-                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-                    }`}
-                  >
-                    {term}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </form>
 
         <fieldset className="space-y-3 rounded-md border border-slate-200 p-3">
@@ -481,6 +667,7 @@ export default function HomePage() {
                 checked={showBookmarkedOnly}
                 onChange={(event) => {
                   setShowBookmarkedOnly(event.target.checked);
+                  setPage(1);
                 }}
                 className="h-4 w-4 rounded border-slate-300"
               />
@@ -533,6 +720,7 @@ export default function HomePage() {
                 setShowBookmarkedOnly(false);
                 setSearchTerm("");
                 setSortOrder("newest");
+                setAdvancedFilters(DEFAULT_FILTERS);
                 setPage(1);
               }}
             >
@@ -576,11 +764,14 @@ export default function HomePage() {
                       )}
                     </h2>
                   </Link>
-                  <p className="mt-2 flex min-w-0 items-baseline gap-1 text-sm font-bold text-slate-700">
-                    <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap tabular-nums">
-                      {toXlm(job.amount)}
-                    </span>
-                    <span className="shrink-0">XLM</span>
+                  <p
+                    className="mt-2 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm font-bold tabular-nums text-slate-700"
+                    title={fiatTooltip}
+                  >
+                    {formatXlmWithFiat(job.amount, fiatCurrency, fiatRates?.rates)}
+                  </p>
+                  <p className="mt-0.5 truncate font-mono text-xs text-slate-400">
+                    Token: {job.token ? `${job.token.slice(0, 8)}...${job.token.slice(-4)}` : "N/A"}
                   </p>
                   <p className="mt-1 line-clamp-2 text-sm text-slate-700">
                     {getDescription(job.description_hash)}
@@ -625,6 +816,7 @@ export default function HomePage() {
                         if (result.hash) {
                           setLatestTxHash(result.hash);
                         }
+                        addNotification("job_accepted", id, `You accepted Job #${id}.`);
                         await refresh();
                       } catch (e) {
                         setError(
@@ -643,17 +835,23 @@ export default function HomePage() {
                   </button>
                   <button
                     type="button"
-                    className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    className={`rounded-md border px-4 py-2 text-sm font-medium transition-all duration-300 ${
+                      bookmarkedIds.includes(id)
+                        ? "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                        : "border-slate-300 text-slate-700 hover:bg-slate-50"
+                    } ${animatingBookmarkId === id ? "scale-110" : "scale-100"}`}
                     onClick={() => {
+                      setAnimatingBookmarkId(id);
                       setBookmarkedIds((prev) =>
                         prev.includes(id)
                           ? prev.filter((value) => value !== id)
                           : [...prev, id],
                       );
+                      setTimeout(() => setAnimatingBookmarkId(null), 300);
                     }}
                     aria-pressed={bookmarkedIds.includes(id)}
                   >
-                    {bookmarkedIds.includes(id) ? "Bookmarked" : "Bookmark"}
+                    {bookmarkedIds.includes(id) ? "★ Saved" : "☆ Save"}
                   </button>
                 </div>
                 {!wallet && (

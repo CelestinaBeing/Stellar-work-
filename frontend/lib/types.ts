@@ -17,3 +17,30 @@ export interface Job {
   token: string;
   revision_count: number;
 }
+
+/** A single milestone within a milestone-based job. */
+export interface Milestone {
+  id: number;
+  description_hash: string;
+  amount: string; // stroops as string
+  is_released: boolean;
+}
+
+export type NotificationEvent =
+  | "job_accepted"
+  | "work_submitted"
+  | "work_approved"
+  | "job_cancelled"
+  | "dispute_raised"
+  | "dispute_resolved";
+
+export interface Notification {
+  id: string;
+  event: NotificationEvent;
+  jobId: number;
+  message: string;
+  timestamp: number;
+  seen: boolean;
+}
+
+export type NotificationPreferences = Record<NotificationEvent, boolean>;
