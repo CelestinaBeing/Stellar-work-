@@ -1,0 +1,138 @@
+{
+  "common": {
+    "siteName": "StellarWork",
+    "siteTagline": "Decentralized Escrow Marketplace",
+    "builtOn": "Built on",
+    "stellar": "Stellar",
+    "skipToContent": "Skip to main content",
+    "allRightsReserved": "StellarWork. All rights reserved.",
+    "loading": "Loading...",
+    "error": "Something went wrong",
+    "retry": "Try again",
+    "save": "Save",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "search": "Search",
+    "noResults": "No results found",
+    "export": "Export",
+    "exportCSV": "Export CSV",
+    "exportJSON": "Export JSON"
+  },
+  "nav": {
+    "jobs": "Jobs",
+    "postJob": "Post Job",
+    "dashboard": "Dashboard",
+    "transactions": "Transactions",
+    "disputes": "Disputes",
+    "messages": "Messages",
+    "admin": "Admin",
+    "profile": "Profile",
+    "toggleMenu": "Toggle navigation menu",
+    "cmdK": "⌘K"
+  },
+  "home": {
+    "title": "Open Jobs",
+    "noJobs": "No open jobs yet. Be the first to post one!",
+    "loadMore": "Load more jobs",
+    "searchPlaceholder": "Search jobs..."
+  },
+  "job": {
+    "postTitle": "Post Job",
+    "postDescription": "Create a new job posting on the Stellar network",
+    "title": "Job Title",
+    "titlePlaceholder": "Enter job title",
+    "description": "Description",
+    "amount": "Amount (XLM)",
+    "amountPlaceholder": "0.00",
+    "deadline": "Deadline",
+    "token": "Token",
+    "submit": "Post Job",
+    "postSuccess": "Job posted successfully",
+    "postError": "Failed to post job",
+    "accept": "Accept Job",
+    "submitWork": "Submit Work",
+    "approveWork": "Approve Work",
+    "rejectWork": "Reject Work",
+    "cancelJob": "Cancel Job",
+    "raiseDispute": "Raise Dispute",
+    "viewDetails": "View Details",
+    "status": "Status",
+    "client": "Client",
+    "freelancer": "Freelancer",
+    "createdAt": "Created",
+    "notFound": "Job not found",
+    "open": "Open",
+    "inProgress": "In Progress",
+    "submittedForReview": "Submitted for Review",
+    "completed": "Completed",
+    "cancelled": "Cancelled",
+    "disputed": "Disputed"
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "postedJobs": "Posted Jobs",
+    "acceptedJobs": "Accepted Jobs",
+    "noPostedJobs": "You haven't posted any jobs yet",
+    "noAcceptedJobs": "You haven't accepted any jobs yet",
+    "connectWallet": "Connect your wallet to view your dashboard"
+  },
+  "wallet": {
+    "connect": "Connect Wallet",
+    "disconnect": "Disconnect",
+    "copyAddress": "Copy Address",
+    "copied": "Copied",
+    "switchAccount": "Switch Account",
+    "connecting": "Connecting...",
+    "notInstalled": "Freighter wallet not detected",
+    "installFreighter": "Install Freighter"
+  },
+  "transactions": {
+    "title": "Transactions",
+    "noTransactions": "No transactions found"
+  },
+  "disputes": {
+    "title": "Disputes",
+    "noDisputes": "No disputes found",
+    "all": "All",
+    "active": "Active",
+    "resolved": "Resolved"
+  },
+  "messages": {
+    "title": "Messages",
+    "noMessages": "No messages yet",
+    "unread": "unread messages",
+    "typeMessage": "Type a message..."
+  },
+  "admin": {
+    "title": "Admin Panel",
+    "fees": "Fees",
+    "withdrawFees": "Withdraw Fees",
+    "manageTokens": "Manage Tokens",
+    "noAccess": "Admin access required"
+  },
+  "profile": {
+    "title": "Profile",
+    "address": "Address",
+    "notFound": "Profile not found"
+  },
+  "footer": {
+    "github": "GitHub",
+    "documentation": "Documentation",
+    "license": "License"
+  },
+  "theme": {
+    "light": "Light mode",
+    "dark": "Dark mode",
+    "system": "System preference"
+  },
+  "language": {
+    "switchTo": "Switch to {locale}",
+    "en": "English",
+    "es": "Español"
+  },
+  "error": {
+    "generic": "Something went wrong",
+    "notFound": "Page not found",
+    "unauthorized": "Not authorized"
+  }
+}
