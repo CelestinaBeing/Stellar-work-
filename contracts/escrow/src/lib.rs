@@ -22,6 +22,8 @@ const UPGRADE_TIMELOCK_SECS: u64 = 86_400;
 const DEFAULT_DISPUTE_FEE: i128 = 50_000_000;
 /// Maximum number of milestones allowed per job.
 const MAX_MILESTONES: u32 = 20;
+/// Maximum number of disputes that can be resolved in a single batch call.
+const MAX_BATCH_DISPUTES: u32 = 20;
 
 const INSTANCE_LIFETIME_THRESHOLD: u32 = 17_280;
 const INSTANCE_BUMP_AMOUNT: u32 = 518_400;
@@ -179,6 +181,9 @@ pub enum Error {
     // Issue #460: two-step ownership transfer
     NoPendingTransfer = 29,
     NotPendingAdmin = 30,
+    // Issue #452: batch dispute resolution
+    BatchSizeMismatch = 31,
+    BatchTooLarge = 32,
 }
 
 #[contract]
@@ -702,150 +707,31 @@ impl EscrowContract {
     pub fn resolve_dispute(e: Env, job_id: u64, resolution: DisputeResolution) {
         let admin = load_admin(&e);
         admin.require_auth();
+        resolve_single_dispute(&e, &admin, job_id, resolution);
+    }
 
-        let mut job = get_job_or_panic(&e, job_id);
-        if job.status != JobStatus::Disputed {
-            panic_with_error!(&e, Error::InvalidStatus);
+    /// Resolve multiple disputed jobs in one contract call (admin only).
+    ///
+    /// `job_ids` and `resolutions` must be the same length and no longer than
+    /// `MAX_BATCH_DISPUTES` (20). All resolutions are processed atomically —
+    /// if any single dispute fails (e.g. job is not in Disputed status) the
+    /// entire batch reverts.
+    pub fn batch_resolve_disputes(e: Env, job_ids: Vec<u64>, resolutions: Vec<DisputeResolution>) {
+        let admin = load_admin(&e);
+        admin.require_auth();
+
+        if job_ids.len() != resolutions.len() {
+            panic_with_error!(&e, Error::BatchSizeMismatch);
+        }
+        if job_ids.len() > MAX_BATCH_DISPUTES {
+            panic_with_error!(&e, Error::BatchTooLarge);
         }
 
-        let freelancer = match job.freelancer.clone() {
-            Option::Some(addr) => addr,
-            Option::None => panic_with_error!(&e, Error::InvalidStatus),
-        };
-
-        // Validate bps is in range
-        if resolution.client_bps > BPS_DENOMINATOR as u32 {
-            panic_with_error!(&e, Error::InvalidAmount);
+        for i in 0..job_ids.len() {
+            let job_id = job_ids.get(i).unwrap();
+            let resolution = resolutions.get(i).unwrap();
+            resolve_single_dispute(&e, &admin, job_id, resolution);
         }
-
-        // Load dispute fee deposit state.
-        let dispute_fee: i128 = e
-            .storage()
-            .persistent()
-            .get(&DataKey::DisputeFeePaid(job_id))
-            .unwrap_or(0i128);
-        let raiser: Option<Address> = e
-            .storage()
-            .persistent()
-            .get(&DataKey::DisputeRaiser(job_id));
-
-        // Clean up dispute fee storage.
-        e.storage()
-            .persistent()
-            .remove(&DataKey::DisputeFeePaid(job_id));
-        e.storage()
-            .persistent()
-            .remove(&DataKey::DisputeRaiser(job_id));
-
-        let token_client = token::Client::new(&e, &job.token);
-        let native_token = load_native_token(&e);
-        let native_token_client = token::Client::new(&e, &native_token);
-
-        /// Determine winner: the raiser wins if their share >= 50%.
-        /// client_bps == 10_000 → client wins everything → client wins if client raised
-        /// client_bps == 0     → freelancer wins everything → freelancer wins if freelancer raised
-        let raiser_wins = match &raiser {
-            Some(raiser_addr) => {
-                if raiser_addr == &job.client {
-                    // client raised: wins if client_bps > 5000 (majority to client)
-                    resolution.client_bps > 5_000
-                } else {
-                    // freelancer raised: wins if client_bps < 5000 (majority to freelancer)
-                    resolution.client_bps < 5_000
-                }
-            }
-            None => false,
-        };
-
-        // Handle dispute fee: refund to raiser if they win, else split between counterparty and admin.
-        if dispute_fee > 0 {
-            if raiser_wins {
-                if let Some(raiser_addr) = &raiser {
-                    native_token_client.transfer(
-                        &e.current_contract_address(),
-                        raiser_addr,
-                        &dispute_fee,
-                    );
-                }
-            } else {
-                // Loser's fee: half to the counterparty, half to admin.
-                let half = dispute_fee / 2;
-                let remainder = checked_sub(&e, dispute_fee, half);
-                // Identify the counterparty (the party that did NOT raise the dispute).
-                let counterparty = match &raiser {
-                    Some(raiser_addr) => {
-                        if raiser_addr == &job.client {
-                            freelancer.clone()
-                        } else {
-                            job.client.clone()
-                        }
-                    }
-                    None => admin.clone(),
-                };
-                if half > 0 {
-                    native_token_client.transfer(
-                        &e.current_contract_address(),
-                        &counterparty,
-                        &half,
-                    );
-                }
-                if remainder > 0 {
-                    native_token_client.transfer(
-                        &e.current_contract_address(),
-                        &admin,
-                        &remainder,
-                    );
-                }
-            }
-        }
-
-        if resolution.client_bps == BPS_DENOMINATOR as u32 {
-            job.status = JobStatus::Cancelled;
-            set_job(&e, job_id, &job);
-            bump_instance_ttl(&e);
-
-            token_client.transfer(&e.current_contract_address(), &job.client, &job.amount);
-        } else {
-            let client_share = checked_mul_div(
-                &e,
-                job.amount,
-                resolution.client_bps as i128,
-                BPS_DENOMINATOR,
-            );
-            let freelancer_gross = checked_sub(&e, job.amount, client_share);
-
-            let fee = checked_mul_div(
-                &e,
-                freelancer_gross,
-                get_fee_bps_storage(&e),
-                BPS_DENOMINATOR,
-            );
-            let freelancer_net = checked_sub(&e, freelancer_gross, fee);
-
-            let current_fees = get_token_fees(&e, &job.token);
-            let updated_fees = checked_add(&e, current_fees, fee);
-
-            e.storage()
-                .persistent()
-                .set(&DataKey::TokenFees(job.token.clone()), &updated_fees);
-            bump_token_fees_ttl(&e, &job.token);
-
-            job.status = JobStatus::Completed;
-            set_job(&e, job_id, &job);
-            bump_instance_ttl(&e);
-
-            if client_share > 0 {
-                token_client.transfer(&e.current_contract_address(), &job.client, &client_share);
-            }
-            if freelancer_net > 0 {
-                token_client.transfer(&e.current_contract_address(), &freelancer, &freelancer_net);
-            }
-        }
-
-        e.events().publish(
-            (Symbol::new(&e, "dispute_resolved"),),
-            (job_id, resolution.client_bps),
-        );
     }
 
     /// Issue #463 — Explicit split-outcome resolution.
@@ -1724,6 +1610,118 @@ impl EscrowContract {
         }
         jobs
     }
+}
+
+/// Core dispute resolution logic shared by `resolve_dispute` and `batch_resolve_disputes`.
+/// Caller must have already verified admin auth before invoking this.
+fn resolve_single_dispute(e: &Env, admin: &Address, job_id: u64, resolution: DisputeResolution) {
+    let mut job = get_job_or_panic(e, job_id);
+    if job.status != JobStatus::Disputed {
+        panic_with_error!(e, Error::InvalidStatus);
+    }
+
+    let freelancer = match job.freelancer.clone() {
+        Option::Some(addr) => addr,
+        Option::None => panic_with_error!(e, Error::InvalidStatus),
+    };
+
+    if resolution.client_bps > BPS_DENOMINATOR as u32 {
+        panic_with_error!(e, Error::InvalidAmount);
+    }
+
+    let dispute_fee: i128 = e
+        .storage()
+        .persistent()
+        .get(&DataKey::DisputeFeePaid(job_id))
+        .unwrap_or(0i128);
+    let raiser: Option<Address> = e
+        .storage()
+        .persistent()
+        .get(&DataKey::DisputeRaiser(job_id));
+
+    e.storage().persistent().remove(&DataKey::DisputeFeePaid(job_id));
+    e.storage().persistent().remove(&DataKey::DisputeRaiser(job_id));
+
+    let token_client = token::Client::new(e, &job.token);
+    let native_token = load_native_token(e);
+    let native_token_client = token::Client::new(e, &native_token);
+
+    // Determine winner: the raiser wins if their share >= 50%.
+    let raiser_wins = match &raiser {
+        Some(raiser_addr) => {
+            if raiser_addr == &job.client {
+                resolution.client_bps > 5_000
+            } else {
+                resolution.client_bps < 5_000
+            }
+        }
+        None => false,
+    };
+
+    if dispute_fee > 0 {
+        if raiser_wins {
+            if let Some(raiser_addr) = &raiser {
+                native_token_client.transfer(
+                    &e.current_contract_address(),
+                    raiser_addr,
+                    &dispute_fee,
+                );
+            }
+        } else {
+            let half = dispute_fee / 2;
+            let remainder = checked_sub(e, dispute_fee, half);
+            let counterparty = match &raiser {
+                Some(raiser_addr) => {
+                    if raiser_addr == &job.client {
+                        freelancer.clone()
+                    } else {
+                        job.client.clone()
+                    }
+                }
+                None => admin.clone(),
+            };
+            if half > 0 {
+                native_token_client.transfer(&e.current_contract_address(), &counterparty, &half);
+            }
+            if remainder > 0 {
+                native_token_client.transfer(&e.current_contract_address(), admin, &remainder);
+            }
+        }
+    }
+
+    if resolution.client_bps == BPS_DENOMINATOR as u32 {
+        job.status = JobStatus::Cancelled;
+        set_job(e, job_id, &job);
+        bump_instance_ttl(e);
+        token_client.transfer(&e.current_contract_address(), &job.client, &job.amount);
+    } else {
+        let client_share = checked_mul_div(e, job.amount, resolution.client_bps as i128, BPS_DENOMINATOR);
+        let freelancer_gross = checked_sub(e, job.amount, client_share);
+        let fee = checked_mul_div(e, freelancer_gross, get_fee_bps_storage(e), BPS_DENOMINATOR);
+        let freelancer_net = checked_sub(e, freelancer_gross, fee);
+
+        let current_fees = get_token_fees(e, &job.token);
+        let updated_fees = checked_add(e, current_fees, fee);
+
+        e.storage().persistent().set(&DataKey::TokenFees(job.token.clone()), &updated_fees);
+        bump_token_fees_ttl(e, &job.token);
+
+        job.status = JobStatus::Completed;
+        set_job(e, job_id, &job);
+        bump_instance_ttl(e);
+
+        if client_share > 0 {
+            token_client.transfer(&e.current_contract_address(), &job.client, &client_share);
+        }
+        if freelancer_net > 0 {
+            token_client.transfer(&e.current_contract_address(), &freelancer, &freelancer_net);
+        }
+    }
+
+    e.events().publish(
+        (Symbol::new(e, "dispute_resolved"),),
+        (job_id, resolution.client_bps),
+    );
 }
 
 fn require_active_access(e: &Env, address: &Address) {
