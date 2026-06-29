@@ -133,6 +133,9 @@ pub enum DataKey {
     DisputeRaiser(u64),
     /// Fee exemption status for an address.
     FeeExempted(Address),
+    // Issue #460: two-step ownership transfer
+    /// Address nominated to become the next admin (cleared on accept or cancel).
+    PendingAdmin,
 }
 
 #[contracterror]
@@ -169,6 +172,9 @@ pub enum Error {
     SelfReferralNotAllowed = 26,
     DeadlineNotExtendable = 27,
     NoFreelancerAssigned = 28,
+    // Issue #460: two-step ownership transfer
+    NoPendingTransfer = 29,
+    NotPendingAdmin = 30,
 }
 
 #[contract]
@@ -912,6 +918,93 @@ impl EscrowContract {
         bump_instance_ttl(&e);
         e.events()
             .publish((Symbol::new(&e, "admin_transferred"),), (caller, new_admin));
+    }
+
+    // ── Issue #460: two-step ownership transfer ──────────────────────────────
+
+    /// Step 1: nominate `new_admin` as the pending admin.
+    ///
+    /// Only the current admin may call this. Emits `OwnershipTransferStarted`.
+    /// The transfer is not final until the nominee calls `accept_ownership`.
+    pub fn transfer_ownership(e: Env, admin: Address, new_admin: Address) {
+        admin.require_auth();
+        let current_admin = load_admin(&e);
+        if admin != current_admin {
+            panic_with_error!(&e, Error::UnauthorizedAdmin);
+        }
+        e.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
+        bump_instance_ttl(&e);
+        e.events().publish(
+            (Symbol::new(&e, "ownership_transfer_started"),),
+            (admin, new_admin),
+        );
+    }
+
+    /// Step 2: the nominated address accepts and becomes the new admin.
+    ///
+    /// Only the pending admin may call this. Clears `PendingAdmin` and emits
+    /// `OwnershipTransferred`.
+    pub fn accept_ownership(e: Env, new_admin: Address) {
+        new_admin.require_auth();
+        let pending: Option<Address> = e
+            .storage()
+            .instance()
+            .get(&DataKey::PendingAdmin);
+        let pending_admin = match pending {
+            Some(a) => a,
+            None => panic_with_error!(&e, Error::NoPendingTransfer),
+        };
+        if new_admin != pending_admin {
+            panic_with_error!(&e, Error::NotPendingAdmin);
+        }
+        let old_admin = load_admin(&e);
+        e.storage()
+            .instance()
+            .set(&DataKey::Admin, &new_admin);
+        e.storage()
+            .instance()
+            .remove(&DataKey::PendingAdmin);
+        bump_instance_ttl(&e);
+        e.events().publish(
+            (Symbol::new(&e, "ownership_transferred"),),
+            (old_admin, new_admin),
+        );
+    }
+
+    /// Abort a pending ownership transfer.
+    ///
+    /// Only the current admin may cancel. Clears `PendingAdmin` and emits
+    /// `OwnershipTransferCancelled`.
+    pub fn cancel_ownership_transfer(e: Env, admin: Address) {
+        admin.require_auth();
+        let current_admin = load_admin(&e);
+        if admin != current_admin {
+            panic_with_error!(&e, Error::UnauthorizedAdmin);
+        }
+        let pending: Option<Address> = e
+            .storage()
+            .instance()
+            .get(&DataKey::PendingAdmin);
+        if pending.is_none() {
+            panic_with_error!(&e, Error::NoPendingTransfer);
+        }
+        e.storage()
+            .instance()
+            .remove(&DataKey::PendingAdmin);
+        bump_instance_ttl(&e);
+        e.events().publish(
+            (Symbol::new(&e, "ownership_transfer_cancelled"),),
+            (admin,),
+        );
+    }
+
+    /// Returns the nominated pending admin, or `None` if no transfer is in progress.
+    pub fn get_pending_admin(e: Env) -> Option<Address> {
+        e.storage()
+            .instance()
+            .get(&DataKey::PendingAdmin)
     }
 
     pub fn get_job_count(e: Env) -> u64 {
@@ -7630,5 +7723,92 @@ mod test {
             events_after > events_before,
             "extend_deadline must emit at least one event"
         );
+    }
+
+    // ── Issue #460: two-step ownership transfer ──────────────────────────────
+
+    #[test]
+    fn transfer_ownership_sets_pending_admin() {
+        let (env, client, admin, _, _, _) = setup();
+        let new_admin = Address::generate(&env);
+        assert_eq!(client.get_pending_admin(), None);
+        client.transfer_ownership(&admin, &new_admin);
+        assert_eq!(client.get_pending_admin(), Some(new_admin));
+        // Admin unchanged until accepted
+        assert_eq!(client.get_admin(), admin);
+    }
+
+    #[test]
+    fn accept_ownership_promotes_pending_and_clears_slot() {
+        let (env, client, admin, _, _, _) = setup();
+        let new_admin = Address::generate(&env);
+        client.transfer_ownership(&admin, &new_admin);
+        client.accept_ownership(&new_admin);
+        assert_eq!(client.get_admin(), new_admin);
+        assert_eq!(client.get_pending_admin(), None);
+    }
+
+    #[test]
+    fn cancel_ownership_transfer_clears_pending() {
+        let (env, client, admin, _, _, _) = setup();
+        let new_admin = Address::generate(&env);
+        client.transfer_ownership(&admin, &new_admin);
+        client.cancel_ownership_transfer(&admin);
+        assert_eq!(client.get_pending_admin(), None);
+        // Admin unchanged
+        assert_eq!(client.get_admin(), admin);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #29)")]
+    fn accept_ownership_panics_when_no_pending_transfer() {
+        let (env, client, _, _, _, _) = setup();
+        let stranger = Address::generate(&env);
+        client.accept_ownership(&stranger);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #30)")]
+    fn accept_ownership_panics_for_wrong_address() {
+        let (env, client, admin, _, _, _) = setup();
+        let new_admin = Address::generate(&env);
+        let stranger = Address::generate(&env);
+        client.transfer_ownership(&admin, &new_admin);
+        client.accept_ownership(&stranger);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #29)")]
+    fn cancel_ownership_transfer_panics_when_no_pending_transfer() {
+        let (_, client, admin, _, _, _) = setup();
+        client.cancel_ownership_transfer(&admin);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #13)")]
+    fn transfer_ownership_rejects_non_admin() {
+        let (env, client, _, _, _, _) = setup();
+        let stranger = Address::generate(&env);
+        let new_admin = Address::generate(&env);
+        client.transfer_ownership(&stranger, &new_admin);
+    }
+
+    #[test]
+    fn transfer_ownership_emits_started_event() {
+        let (env, client, admin, _, _, _) = setup();
+        let new_admin = Address::generate(&env);
+        let events_before = env.events().all().len();
+        client.transfer_ownership(&admin, &new_admin);
+        assert!(env.events().all().len() > events_before);
+    }
+
+    #[test]
+    fn accept_ownership_emits_transferred_event() {
+        let (env, client, admin, _, _, _) = setup();
+        let new_admin = Address::generate(&env);
+        client.transfer_ownership(&admin, &new_admin);
+        let events_before = env.events().all().len();
+        client.accept_ownership(&new_admin);
+        assert!(env.events().all().len() > events_before);
     }
 }
