@@ -10,7 +10,10 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build",
+    "chromatic": "chromatic --storybook-build-dir storybook-static"
   },
   "dependencies": {
     "@ledgerhq/hw-app-str": "^6.28.0",
@@ -31,7 +34,11 @@
     "react-dom": "19.2.4"
   },
   "devDependencies": {
+    "@chromatic-com/storybook": "^5.2.1",
     "@playwright/test": "^1.59.1",
+    "@storybook/addon-a11y": "^10.4.6",
+    "@storybook/addon-vitest": "^10.4.6",
+    "@storybook/nextjs-vite": "^10.4.6",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
@@ -42,6 +49,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.3",
     "jsdom": "^27.0.1",
+    "storybook": "^10.4.6",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^3.2.4"
