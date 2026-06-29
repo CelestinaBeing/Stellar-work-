@@ -131,6 +131,8 @@ pub enum DataKey {
     DisputeFeePaid(u64),
     /// Address of the party who raised the dispute, keyed by job_id.
     DisputeRaiser(u64),
+    /// Fee exemption status for an address.
+    FeeExempted(Address),
 }
 
 #[contracterror]
@@ -339,9 +341,20 @@ impl EscrowContract {
             Option::None => panic_with_error!(&e, Error::InvalidStatus),
         };
 
-        let fee_bps = calculate_fee_for_amount(&e, job.amount);
-        let fee = checked_mul_div(&e, job.amount, fee_bps, BPS_DENOMINATOR);
-        let payout = checked_sub(&e, job.amount, fee);
+        // Check if client or freelancer is fee-exempted
+        let client_exempted = is_fee_exempted(&e, job.client.clone());
+        let freelancer_exempted = is_fee_exempted(&e, freelancer.clone());
+        let fee_exempted = client_exempted || freelancer_exempted;
+
+        let (fee, payout) = if fee_exempted {
+            (0i128, job.amount)
+        } else {
+            let fee_bps = calculate_fee_for_amount(&e, job.amount);
+            let calculated_fee = checked_mul_div(&e, job.amount, fee_bps, BPS_DENOMINATOR);
+            let calculated_payout = checked_sub(&e, job.amount, calculated_fee);
+            (calculated_fee, calculated_payout)
+        };
+
         let current_fees = get_token_fees(&e, &job.token);
         let updated_fees = checked_add(&e, current_fees, fee);
 
@@ -1389,6 +1402,26 @@ impl EscrowContract {
 
     pub fn is_whitelisted(e: Env, address: Address) -> bool {
         e.storage().persistent().get(&DataKey::Whitelisted(address)).unwrap_or(false)
+    }
+
+    // --- Fee Exemption Endpoints ---
+    pub fn set_fee_exemption(e: Env, admin: Address, address: Address, exempted: bool) {
+        admin.require_auth();
+        let current_admin = load_admin(&e);
+        if admin != current_admin {
+            panic_with_error!(&e, Error::UnauthorizedAdmin);
+        }
+        if exempted {
+            e.storage().persistent().set(&DataKey::FeeExempted(address.clone()), &true);
+            e.storage().persistent().extend_ttl(&DataKey::FeeExempted(address.clone()), INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        } else {
+            e.storage().persistent().remove(&DataKey::FeeExempted(address.clone()));
+        }
+        e.events().publish((Symbol::new(&e, "fee_exemption_updated"),), (address, exempted));
+    }
+
+    pub fn is_fee_exempted(e: Env, address: Address) -> bool {
+        e.storage().persistent().get(&DataKey::FeeExempted(address)).unwrap_or(false)
     }
 
     // --- Admin Job Views Endpoints ---
