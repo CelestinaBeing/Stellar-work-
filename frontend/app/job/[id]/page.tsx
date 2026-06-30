@@ -5,6 +5,7 @@ import InfoTooltip from "@/components/InfoTooltip";
 import LoadingState from "@/components/LoadingState";
 import { useToast } from "@/components/ToastProvider";
 import StatusPill from "@/components/StatusPill";
+import ShareButton from "@/components/ShareButton";
 import RichTextRenderer, { isRichText, PlainTextRenderer } from "@/components/RichTextRenderer";
 import { useNotifications } from "@/lib/notifications-context";
 import { acceptJob, approveWork, cancelJob, freelancerCancelJob, getDescriptionCid, getJob, submitWork } from "@/lib/contract";
@@ -29,6 +30,46 @@ import { useEffect, useRef, useState } from "react";
 type PendingAction = "cancelJob" | "approveWork" | "submitWork" | "freelancerCancelJob";
 
 const BOOKMARK_STORAGE_KEY = "stellarwork:bookmarked-jobs";
+
+function getAutoApprovalCountdown(submittedAtStr: string | undefined) {
+  if (!submittedAtStr) return null;
+  const submittedAtNum = Number(submittedAtStr);
+  if (!submittedAtNum || isNaN(submittedAtNum)) return null;
+
+  const APPROVAL_WINDOW = 14 * 24 * 60 * 60; // 14 days in seconds
+  const autoApproveTime = (submittedAtNum + APPROVAL_WINDOW) * 1000;
+  const now = Date.now();
+  const diff = autoApproveTime - now;
+
+  if (diff <= 0) {
+    return {
+      expired: true,
+      text: "The 14-day approval window has expired. Payment can now be automatically released to the freelancer.",
+    };
+  }
+
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+  let timeStr = "";
+  if (days > 0) {
+    timeStr += `${days} day${days > 1 ? "s" : ""}`;
+  }
+  if (hours > 0) {
+    if (timeStr) timeStr += ", ";
+    timeStr += `${hours} hour${hours > 1 ? "s" : ""}`;
+  }
+  if (days === 0 && minutes > 0) {
+    if (timeStr) timeStr += ", ";
+    timeStr += `${minutes} minute${minutes > 1 ? "s" : ""}`;
+  }
+
+  return {
+    expired: false,
+    text: `Payment will be automatically released to the freelancer in ${timeStr} if you do not take action.`,
+  };
+}
 
 export default function JobDetailPage() {
   const params = useParams<{ id: string }>();
@@ -426,12 +467,40 @@ export default function JobDetailPage() {
         </p>
       )}
 
+      {job.status === "SubmittedForReview" && (() => {
+        const countdown = getAutoApprovalCountdown(job.submitted_at);
+        if (!countdown) return null;
+        return (
+          <div className={`rounded-lg border p-4 text-sm ${
+            countdown.expired
+              ? "border-red-200 bg-red-50 text-red-800"
+              : "border-amber-200 bg-amber-50 text-amber-800"
+          }`}>
+            <div className="flex items-start gap-3">
+              <svg className="h-5 w-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <div>
+                <h4 className="font-semibold">{isClient ? "Action Required: Review Submitted Work" : "Work Under Review"}</h4>
+                <p className="mt-1 text-xs opacity-90">{countdown.text}</p>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       <article className="space-y-2 rounded-lg border border-slate-200 bg-white p-5 text-sm">
         <div className="flex items-center justify-between gap-2">
           <p>
             <strong>Status:</strong> <StatusPill status={job.status} />
           </p>
-          <button
+          <div className="flex items-center gap-2">
+            <ShareButton
+              jobId={id}
+              jobTitle={`Job #${id}`}
+              jobAmount={formatXlmWithFiat(job.amount, fiatCurrency, fiatRates?.rates)}
+            />
+            <button
             type="button"
             onClick={toggleBookmark}
             className={`rounded-md border px-3 py-1.5 text-sm font-medium transition-all duration-200 ${
@@ -444,6 +513,7 @@ export default function JobDetailPage() {
           >
             {isBookmarked ? "★ Saved" : "☆ Save"}
           </button>
+          </div>
         </div>
         <p>
           <strong>Client:</strong> {job.client}

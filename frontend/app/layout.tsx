@@ -2,21 +2,28 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
+import dynamic from "next/dynamic";
 import { WalletProvider } from "@/lib/wallet-context";
 import { ToastProvider } from "@/components/ToastProvider";
 import { NotificationProvider } from "@/lib/notifications-context";
 import { MessagingProvider } from "@/lib/messaging-context";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { TypographyProvider } from "@/lib/typography-context";
+import { NetworkProvider } from "@/lib/network-context";
 import { Navigation } from "./navigation";
 import { ScrollRestorer } from "@/components/ScrollRestorer";
 import ErrorBoundary from "@/components/ErrorBoundary";
-import CommandPalette from "@/components/CommandPalette";
-import OnboardingProvider from "@/components/OnboardingProvider";
-import AnnouncementBanner from "@/components/AnnouncementBanner";
 import JsonLd from "@/components/JsonLd";
 import AppFooter from "@/components/AppFooter";
+import OfflineIndicator from "@/components/OfflineIndicator";
 import "./globals.css";
+
+const CommandPalette = dynamic(() => import("@/components/CommandPalette"), { ssr: false });
+const ShortcutCheatSheet = dynamic(() => import("@/components/ShortcutCheatSheet"), { ssr: false });
+const OnboardingProvider = dynamic(() => import("@/components/OnboardingProvider"), { ssr: false });
+const InstallPrompt = dynamic(() => import("@/components/InstallPrompt"), { ssr: false });
+const ServiceWorkerRegistration = dynamic(() => import("@/components/ServiceWorkerRegistration"), { ssr: false });
+const AnnouncementBanner = dynamic(() => import("@/components/AnnouncementBanner"), { ssr: false });
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -37,7 +44,7 @@ export const viewport: Viewport = {
 const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://stellarwork.app";
 
 export const metadata: Metadata = {
-  metadataBase: new URL(BASE_URL),
+    metadataBase: new URL(BASE_URL),
   title: {
     default: "StellarWork — Decentralized Freelance Marketplace on Stellar",
     template: "%s | StellarWork",
@@ -56,6 +63,7 @@ export const metadata: Metadata = {
   ],
   authors: [{ name: "StellarWork" }],
   creator: "StellarWork",
+  manifest: "/manifest.json",
   openGraph: {
     type: "website",
     locale: "en_US",
@@ -129,6 +137,7 @@ export default async function RootLayout({
         <NextIntlClientProvider messages={messages} locale={locale}>
         <ThemeProvider>
         <TypographyProvider>
+        <NetworkProvider>
         <WalletProvider>
           <NotificationProvider>
           <MessagingProvider>
@@ -139,20 +148,25 @@ export default async function RootLayout({
           >
             Skip to main content
           </a>
+          <ServiceWorkerRegistration />
           <AnnouncementBanner />
+          <OfflineIndicator />
           <Navigation />
           <CommandPalette />
+          <ShortcutCheatSheet />
           <OnboardingProvider />
           <ScrollRestorer />
           <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-5xl flex-1 px-3 py-6 sm:px-4 sm:py-8">
             <ErrorBoundary>{children}</ErrorBoundary>
           </main>
+          <InstallPrompt />
           <AppFooter />
           </ToastProvider>
           </MessagingProvider>
           </NotificationProvider>
         </WalletProvider>
         </TypographyProvider>
+        </NetworkProvider>
         </ThemeProvider>
         </NextIntlClientProvider>
       </body>

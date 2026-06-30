@@ -2,6 +2,7 @@
 
 import { useTheme } from "@/components/ThemeProvider";
 import { useWallet } from "@/lib/wallet-context";
+import Link from "next/link";
 import {
   FIAT_CURRENCIES,
   getPreferredFiatCurrency,
@@ -387,6 +388,14 @@ export default function SettingsClient() {
           <p className="text-xs capitalize text-slate-600 dark:text-slate-400">
             {network}
           </p>
+        </div>
+        <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
+          <Link
+            href="/help"
+            className="text-xs font-semibold text-blue-600 hover:underline dark:text-blue-400"
+          >
+            Account Recovery &amp; Key Management Guide &rarr;
+          </Link>
         </div>
       </Section>
     </div>

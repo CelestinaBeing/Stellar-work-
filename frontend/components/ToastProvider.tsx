@@ -11,6 +11,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { CheckCircle2, XCircle } from "lucide-react";
 
 type ToastVariant = "success" | "error";
 
@@ -103,7 +104,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 : "bg-red-50 text-red-800 ring-red-200"
             }`}
           >
-            <span aria-hidden="true">{toast.variant === "success" ? "✓" : "✕"}</span>
+            <div className="shrink-0 pt-0.5 text-current" aria-hidden="true">
+              {toast.variant === "success" ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+            </div>
             <p className="min-w-0 flex-1">{toast.message}</p>
             <button
               type="button"

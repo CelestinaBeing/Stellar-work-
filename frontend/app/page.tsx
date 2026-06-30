@@ -6,6 +6,7 @@ import InfoTooltip from "@/components/InfoTooltip";
 import NoResultsState from "@/components/NoResultsState";
 import JobCardSkeleton from "@/components/JobCardSkeleton";
 import SectionCard from "@/components/SectionCard";
+import ComparisonBar from "@/components/ComparisonBar";
 import JobFilterPanel, { DEFAULT_FILTERS, type JobFilters } from "@/components/JobFilterPanel";
 import { acceptJob, getDescriptionCid, getJob, getJobCount } from "@/lib/contract";
 import { fetchFromIpfs } from "@/lib/ipfs-service";
@@ -32,16 +33,21 @@ import {
 } from "@/lib/recent-searches";
 import { getExplorerTxUrl } from "@/lib/stellar";
 import { getRecentJobIds, getJobWindowBounds } from "@/lib/recent-ids";
-import type { Job } from "@/lib/types";
+import type { Job, JobStatus } from "@/lib/types";
 import { useWallet } from "@/lib/wallet-context";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 
 const BOOKMARK_STORAGE_KEY = "stellarwork:bookmarked-jobs";
+const COMPARE_IDS_PARAM = "compare";
+const MAX_COMPARE_JOBS = 4;
 const VIEW_MODE_STORAGE_KEY = "stellarwork:jobs-view-mode";
+const JOBS_CACHE_KEY = "stellarwork:jobs-cache";
+const JOBS_CACHE_TTL_MS = 30_000;
 
 type JobsViewMode = "grid" | "list";
+type SortOrder = "newest" | "oldest" | "highest_amount";
 
 function readViewMode(): JobsViewMode {
   if (typeof window === "undefined") return "grid";
@@ -57,14 +63,37 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
   const [latestTxHash, setLatestTxHash] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [page, setPage] = useState(() => {
+    if (typeof window === "undefined") return 1;
+    const p = new URLSearchParams(window.location.search).get("page");
+    const n = p ? parseInt(p, 10) : NaN;
+    return n > 0 ? n : 1;
+  });
+  const [pageSize, setPageSize] = useState(() => {
+    if (typeof window === "undefined") return 10;
+    const p = new URLSearchParams(window.location.search).get("pageSize");
+    const n = p ? parseInt(p, 10) : NaN;
+    return [10, 20, 50].includes(n) ? n : 10;
+  });
   const [totalJobs, setTotalJobs] = useState(0);
-  const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
+  const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "highest_amount">(() => {
+    if (typeof window === "undefined") return "newest";
+    const s = new URLSearchParams(window.location.search).get("sort");
+    return s === "oldest" ? "oldest" : s === "highest_amount" ? "highest_amount" : "newest";
+  });
+  const [statusFilter, setStatusFilter] = useState<JobStatus | "all">(() => {
+    if (typeof window === "undefined") return "Open";
+    const s = new URLSearchParams(window.location.search).get("status");
+    const validStatuses: string[] = ["Open", "InProgress", "SubmittedForReview", "Completed", "Cancelled", "Disputed", "all"];
+    return validStatuses.includes(s ?? "") ? (s as JobStatus | "all") : "Open";
+  });
   const [showBookmarkedOnly, setShowBookmarkedOnly] = useState(false);
   const [bookmarkedIds, setBookmarkedIds] = useState<number[]>([]);
   const [animatingBookmarkId, setAnimatingBookmarkId] = useState<number | null>(null);
-  const [searchTerm, setSearchTerm] = useState("");
+  const [searchTerm, setSearchTerm] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("q") ?? "";
+  });
   const [recentSearches, setRecentSearches] = useState<string[] | null>(null);
   const [recentSearchesOpen, setRecentSearchesOpen] = useState(false);
   const [resultsAnnouncement, setResultsAnnouncement] = useState("");
@@ -89,6 +118,19 @@ export default function HomePage() {
       dateRange: (params.get("dateRange") as JobFilters["dateRange"]) ?? "all",
       freelancerStatus: (params.get("freelancerStatus") as JobFilters["freelancerStatus"]) ?? "all",
     };
+  });
+
+  // Comparison selection state — persisted in URL query params
+  const [compareIds, setCompareIds] = useState<number[]>(() => {
+    if (typeof window === "undefined") return [];
+    const params = new URLSearchParams(window.location.search);
+    const raw = params.get(COMPARE_IDS_PARAM);
+    if (!raw) return [];
+    return raw
+      .split(",")
+      .map((s) => parseInt(s, 10))
+      .filter((n) => !Number.isNaN(n) && n > 0)
+      .slice(0, MAX_COMPARE_JOBS);
   });
 
   useEffect(() => {
@@ -126,8 +168,8 @@ export default function HomePage() {
   }, [viewMode]);
 
   const totalPages = useMemo(
-    () => Math.max(1, Math.ceil(totalJobs / pageSize)),
-    [pageSize, totalJobs],
+    () => Math.max(1, Math.ceil(visibleJobs.length / pageSize)),
+    [pageSize, visibleJobs],
   );
 
   useEffect(() => {
@@ -162,16 +204,31 @@ export default function HomePage() {
     saveRecentSearches(recentSearches);
   }, [recentSearches]);
 
-  // Sync advanced filters to URL query params for bookmarking.
+  // Sync advanced filters and comparison selection to URL query params.
   useEffect(() => {
     const params = new URLSearchParams();
+    if (searchTerm.trim()) params.set("q", searchTerm.trim());
+    if (page > 1) params.set("page", String(page));
+    if (pageSize !== 10) params.set("pageSize", String(pageSize));
+    if (sortOrder !== "newest") params.set("sort", sortOrder);
+    if (statusFilter !== "Open") params.set("status", statusFilter);
     if (advancedFilters.minAmount) params.set("minAmount", advancedFilters.minAmount);
     if (advancedFilters.maxAmount) params.set("maxAmount", advancedFilters.maxAmount);
     if (advancedFilters.dateRange !== "all") params.set("dateRange", advancedFilters.dateRange);
-    if (advancedFilters.freelancerStatus !== "all") params.set("freelancerStatus", advancedFilters.freelancerStatus);
+    if (advancedFilters.freelancerStatus !== "all")
+      params.set("freelancerStatus", advancedFilters.freelancerStatus);
+    if (compareIds.length > 0) params.set(COMPARE_IDS_PARAM, compareIds.join(","));
     const qs = params.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
-  }, [advancedFilters, pathname, router]);
+  }, [searchTerm, page, pageSize, sortOrder, statusFilter, advancedFilters, compareIds, pathname, router]);
+
+  function toggleCompare(id: number) {
+    setCompareIds((prev) => {
+      if (prev.includes(id)) return prev.filter((v) => v !== id);
+      if (prev.length >= MAX_COMPARE_JOBS) return prev;
+      return [...prev, id];
+    });
+  }
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -193,14 +250,32 @@ export default function HomePage() {
         setPage(safePage);
       }
 
-      const bounds = getJobWindowBounds(count, safePage, pageSize);
-      if (!bounds) {
-        setJobs([]);
-        setLoading(false);
-        return;
+      const cacheKey = `${JOBS_CACHE_KEY}:${sortOrder}`;
+      const cachedRaw = typeof window !== "undefined" ? localStorage.getItem(cacheKey) : null;
+      if (cachedRaw) {
+        try {
+          const cached = JSON.parse(cachedRaw) as { count: number; jobs: Array<{ id: number; job: Job }>; at: number };
+          if (cached.count === count && Date.now() - cached.at < JOBS_CACHE_TTL_MS) {
+            const descMap: Record<string, string> = {};
+            for (const { job } of cached.jobs) {
+              const stored = localStorage.getItem(`job-desc:${job.description_hash}`);
+              if (stored) descMap[job.description_hash] = stored;
+            }
+            setDescriptions(descMap);
+            setJobs(cached.jobs);
+            isInitialLoadRef.current = false;
+            setLoading(false);
+            return;
+          }
+        } catch {
+          localStorage.removeItem(cacheKey);
+        }
       }
 
-      const idsToFetch = getRecentJobIds(bounds.startId, bounds.endId, sortOrder);
+      const idsToFetch: string[] = [];
+      for (let id = 1; id <= count; id += 1) {
+        idsToFetch.push(String(id));
+      }
 
       const results = await Promise.all(
         idsToFetch.map(async (id) => {
@@ -215,8 +290,15 @@ export default function HomePage() {
 
       const fetched = results.filter(
         (item): item is { id: number; job: Job } =>
-          item !== null && item.job.status === "Open",
+          item !== null,
       );
+
+      if (sortOrder === "highest_amount") {
+        fetched.sort((a, b) => {
+          const diff = BigInt(b.job.amount) - BigInt(a.job.amount);
+          return diff > 0n ? 1 : diff < 0n ? -1 : 0;
+        });
+      }
 
       const descMap: Record<string, string> = {};
       for (const { job } of fetched) {
@@ -256,6 +338,18 @@ export default function HomePage() {
       isInitialLoadRef.current = false;
 
       setJobs(fetched);
+
+      try {
+        if (typeof window !== "undefined") {
+          localStorage.setItem(cacheKey, JSON.stringify({
+            count,
+            jobs: fetched,
+            at: Date.now(),
+          }));
+        }
+      } catch {
+        // storage full, skip caching
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to fetch jobs.");
     } finally {
@@ -308,6 +402,8 @@ export default function HomePage() {
       const { minAmount, maxAmount, dateRange, freelancerStatus } = advancedFilters;
       const amountXlm = parseFloat(toXlm(job.amount));
 
+      if (statusFilter !== "all" && job.status !== statusFilter) return false;
+
       if (minAmount !== "" && !Number.isNaN(parseFloat(minAmount))) {
         if (amountXlm < parseFloat(minAmount)) return false;
       }
@@ -323,7 +419,7 @@ export default function HomePage() {
 
       return true;
     });
-  }, [advancedFilters, bookmarkedIds, getDescription, jobs, normalizedSearchTerm, showBookmarkedOnly]);
+  }, [advancedFilters, bookmarkedIds, getDescription, jobs, normalizedSearchTerm, showBookmarkedOnly, statusFilter]);
 
   useEffect(() => {
     if (loading) return;
@@ -636,6 +732,37 @@ export default function HomePage() {
           </div>
         </form>
 
+        <fieldset className="space-y-1">
+          <legend className="text-sm font-medium text-slate-700">Filter by status</legend>
+          <div className="flex flex-wrap gap-2">
+            {(["Open", "InProgress", "SubmittedForReview", "Completed", "Cancelled", "Disputed"] as JobStatus[]).map((status) => (
+              <button
+                key={status}
+                type="button"
+                onClick={() => { setStatusFilter(status); setPage(1); }}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                  statusFilter === status
+                    ? "bg-slate-900 text-white"
+                    : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                {status === "SubmittedForReview" ? "Review" : status}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => { setStatusFilter("all"); setPage(1); }}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                statusFilter === "all"
+                  ? "bg-slate-900 text-white"
+                  : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              All
+            </button>
+          </div>
+        </fieldset>
+
         <fieldset className="space-y-3 rounded-md border border-slate-200 p-3">
           <legend className="px-1 text-sm font-medium text-slate-700">
             Sort and filter job results
@@ -652,7 +779,7 @@ export default function HomePage() {
               id="jobs-sort-order"
               value={sortOrder}
               onChange={(event) => {
-                setSortOrder(event.target.value as "newest" | "oldest");
+                setSortOrder(event.target.value as "newest" | "oldest" | "highest_amount");
                 setPage(1);
               }}
               className="rounded-md border border-slate-300 bg-white px-2 py-1"
@@ -660,6 +787,7 @@ export default function HomePage() {
             >
               <option value="newest">Newest first</option>
               <option value="oldest">Oldest first</option>
+              <option value="highest_amount">Highest amount</option>
             </select>
             <label className="inline-flex items-center gap-2">
               <input
@@ -710,17 +838,16 @@ export default function HomePage() {
               type="button"
               className="rounded-md border border-slate-300 bg-white px-3 py-1 font-medium text-slate-700 hover:bg-slate-50"
               onClick={() => {
-                // Clear localStorage preferences
                 localStorage.removeItem(BOOKMARK_STORAGE_KEY);
-                // Clear sessionStorage preferences
                 sessionStorage.removeItem(VIEW_MODE_STORAGE_KEY);
-                // Reset state to defaults immediately
                 setBookmarkedIds([]);
                 setViewMode("grid");
                 setShowBookmarkedOnly(false);
                 setSearchTerm("");
                 setSortOrder("newest");
+                setStatusFilter("Open");
                 setAdvancedFilters(DEFAULT_FILTERS);
+                setCompareIds([]);
                 setPage(1);
               }}
             >
@@ -738,7 +865,7 @@ export default function HomePage() {
         }
         aria-label="Open jobs"
       >
-        {visibleJobs.map(({ id, job }) => {
+        {visibleJobs.slice((page - 1) * pageSize, page * pageSize).map(({ id, job }) => {
           const deadline = formatDeadline(job.deadline);
 
           return (
@@ -751,6 +878,19 @@ export default function HomePage() {
                 }`}
               >
                 <div className={viewMode === "list" ? "min-w-0 flex-1" : undefined}>
+                  <div className="mb-1 flex items-start gap-2">
+                    <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-500">
+                      <input
+                        type="checkbox"
+                        checked={compareIds.includes(id)}
+                        onChange={() => toggleCompare(id)}
+                        disabled={!compareIds.includes(id) && compareIds.length >= MAX_COMPARE_JOBS}
+                        className="h-3.5 w-3.5 rounded border-slate-300"
+                        aria-label={`Select Job #${id} for comparison`}
+                      />
+                      Compare
+                    </label>
+                  </div>
                   <Link href={`/job/${id}`} className="block" onClick={() => markJobViewed(id)}>
                     <h2 className="flex items-center gap-2 text-lg font-medium hover:underline">
                       Job #{id}
@@ -865,7 +1005,7 @@ export default function HomePage() {
         })}
       </ul>
 
-      {totalJobs > 0 && (
+      {visibleJobs.length > 0 && (
         <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
           <fieldset className="flex items-center gap-2 text-sm text-slate-600">
             <legend className="sr-only">Pagination settings</legend>
@@ -880,7 +1020,7 @@ export default function HomePage() {
               className="rounded-md border border-slate-300 bg-white px-2 py-1"
               disabled={loading}
             >
-              {[5, 10, 20].map((size) => (
+              {[10, 20, 50].map((size) => (
                 <option key={size} value={size}>
                   {size}
                 </option>
@@ -911,6 +1051,16 @@ export default function HomePage() {
           </div>
         </div>
       )}
+
+      {/* Comparison bar — fixed to bottom when jobs are selected */}
+      {compareIds.length > 0 && (
+        <div className="pb-20" aria-hidden="true" />
+      )}
+      <ComparisonBar
+        selectedIds={compareIds}
+        onRemove={(id) => setCompareIds((prev) => prev.filter((v) => v !== id))}
+        onClear={() => setCompareIds([])}
+      />
     </section>
   );
 }
