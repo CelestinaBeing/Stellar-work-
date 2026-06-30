@@ -115,6 +115,14 @@ pub struct DisputeResolution {
 }
 
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Agreement {
+    pub signer: Address,
+    pub signature: BytesN<64>,
+    pub timestamp: u64,
+}
+
+#[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
     JobsCount,
@@ -156,6 +164,8 @@ pub enum DataKey {
     // Issue #460: two-step ownership transfer
     /// Address nominated to become the next admin (cleared on accept or cancel).
     PendingAdmin,
+    // Issue #SC-79: off-chain signature
+    Agreement(u64, BytesN<32>),
 }
 
 #[contracterror]
@@ -195,11 +205,20 @@ pub enum Error {
     // Issue #456: meta-transaction / gasless support
     ForwarderNotTrusted = 29,
     // Issue #460: two-step ownership transfer
-    NoPendingTransfer = 29,
-    NotPendingAdmin = 30,
+    NoPendingTransfer = 34,
+    NotPendingAdmin = 35,
     // Issue #452: batch dispute resolution
     BatchSizeMismatch = 31,
     BatchTooLarge = 32,
+    InvalidSignature = 33,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgreementStoredEvent {
+    pub job_id: u64,
+    pub hash: BytesN<32>,
+    pub signer: Address,
 }
 
 #[contract]
@@ -373,8 +392,8 @@ impl EscrowContract {
         };
 
         // Check if client or freelancer is fee-exempted
-        let client_exempted = is_fee_exempted(&e, job.client.clone());
-        let freelancer_exempted = is_fee_exempted(&e, freelancer.clone());
+        let client_exempted = Self::is_fee_exempted(e.clone(), job.client.clone());
+        let freelancer_exempted = Self::is_fee_exempted(e.clone(), freelancer.clone());
         let fee_exempted = client_exempted || freelancer_exempted;
 
         let (fee, payout) = if fee_exempted {
@@ -1682,6 +1701,48 @@ impl EscrowContract {
             total_fees_accrued,
             total_volume,
         }
+    }
+
+    pub fn verify_signature(
+        e: Env,
+        public_key: BytesN<32>,
+        message_hash: BytesN<32>,
+        signature: BytesN<64>,
+    ) -> bool {
+        e.crypto().ed25519_verify(&public_key, &message_hash.clone().into(), &signature);
+        true
+    }
+
+    pub fn store_agreement(
+        e: Env,
+        client: Address,
+        freelancer: Address,
+        job_id: u64,
+        message_hash: BytesN<32>,
+        signature: BytesN<64>,
+        public_key: BytesN<32>,
+    ) {
+        client.require_auth();
+        e.crypto().ed25519_verify(&public_key, &message_hash.clone().into(), &signature);
+        
+        let agreement = Agreement {
+            signer: freelancer,
+            signature,
+            timestamp: e.ledger().timestamp(),
+        };
+        
+        e.storage().persistent().set(&DataKey::Agreement(job_id, message_hash.clone()), &agreement);
+        
+        let event_data = AgreementStoredEvent {
+            job_id,
+            hash: message_hash,
+            signer: agreement.signer.clone(),
+        };
+        e.events().publish((Symbol::new(&e, "AgreementStored"),), event_data);
+    }
+
+    pub fn get_agreement(e: Env, job_id: u64, hash: BytesN<32>) -> Option<Agreement> {
+        e.storage().persistent().get(&DataKey::Agreement(job_id, hash))
     }
 }
 
@@ -8113,6 +8174,8 @@ mod test {
 
         // Job is InProgress, not Open — InvalidStatus.
         client.relay_cancel_job(&forwarder, &user, &job_id);
+    }
+
     // ── Issue #460: two-step ownership transfer ──────────────────────────────
 
     #[test]
