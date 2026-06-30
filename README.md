@@ -238,6 +238,17 @@ For third-party integration, see `docs/INTEGRATION.md`.
 
 For the full documentation index, see [docs/README.md](docs/README.md).
 
+## Translation Status
+
+StellarWork supports multiple languages. Community contributions to add or maintain translations are welcome — see [docs/TRANSLATING.md](docs/TRANSLATING.md) for a step-by-step guide.
+
+| Locale | Language | Status | Maintainer |
+|--------|----------|--------|------------|
+| `en` | English | ✅ Complete (reference) | Core team |
+| `es` | Spanish | ✅ Complete | Community |
+
+To add a new language, follow the [translation guide](docs/TRANSLATING.md).
+
 ## Production Operations
 
 For deploying and operating StellarWork in production, start with these three documents:
