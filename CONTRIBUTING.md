@@ -1,26 +1,119 @@
 # Contributing to StellarWork
 
-Thanks for contributing.
+Thanks for contributing! Please take a moment to review this guide before
+submitting changes. All contributors are expected to follow our
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
 New contributors: start with the [onboarding checklist](docs/contributor-onboarding-checklist.md) and the [docs index](docs/README.md).
 
+## Development Setup
+
+### Prerequisites
+
+- **Node.js** 18+ and **npm** 9+
+- **Rust** stable toolchain (for contract development)
+- **Soroban CLI** (for contract builds and deploys)
+- **Docker** (optional, for local Stellar network)
+
+### Clone and Install
+
+```bash
+git clone https://github.com/<your-org>/Stellar-work-.git
+cd Stellar-work-
+```
+
+**Frontend only:**
+
+```bash
+cd frontend
+cp .env.example .env.local
+npm install
+npm run dev
+```
+
+**Full stack with Docker:**
+
+```bash
+cp frontend/.env.example frontend/.env.local
+docker compose up -d
+```
+
+This starts the frontend (port 3000), a contract builder, and a local Stellar
+dev network with Soroban RPC (port 8000).
+
+### Run Checks Locally
+
+```bash
+make test-contract      # cargo test in contracts/escrow
+make test-frontend      # vitest unit tests
+make lint-frontend      # ESLint
+make typecheck          # TypeScript type checking
+```
+
 ## Branching
 
-- Fork and create branches as `feature/<issue-number>-<short-description>`.
+- Fork the repository and create branches from `main`.
+- Use the naming convention: `<type>/<issue-number>-<short-description>`
+
+| Type | Usage |
+|------|-------|
+| `feature/` | New features and enhancements |
+| `fix/` | Bug fixes |
+| `docs/` | Documentation changes |
+| `chore/` | Maintenance, dependency updates, refactoring |
+| `ci/` | CI/CD pipeline changes |
+
+Examples: `feature/42-add-dark-mode`, `fix/17-wallet-connection`, `docs/8-api-reference`
+
+## Commit Message Format
+
+We follow [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+<type>(<scope>): <description>
+
+[optional body]
+
+[optional footer]
+```
+
+**Types**: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`, `style`, `perf`
+
+**Scopes**: `contract`, `frontend`, `docs`, `ci`, `scripts`
+
+Examples:
+```
+feat(frontend): add network switcher dropdown
+fix(contract): handle zero-amount post_job edge case
+docs(readme): add deployment walkthrough
+chore(deps): bump @stellar/stellar-sdk to 15.0.1
+```
+
+## Coding Standards
+
+### Rust (Contract)
+
+- Follow `rustfmt` formatting: `cargo fmt --all -- --check`
+- Run `cargo clippy` and address warnings
+- All public contract functions must have unit tests
+- Use `proptest` for property-based testing of state machines
+
+### TypeScript / React (Frontend)
+
+- Follow ESLint configuration in `frontend/eslint.config.mjs`
+- Use `"use client"` directive at the top of client component files
+- Use Tailwind CSS utilities for all styling — no external UI libraries
+- Prefer `React.memo` for pure presentational components
+- Use dynamic imports for large or rarely-used components
+- All new features must include unit tests in `frontend/__tests__/`
 
 ## Development Rules
 
-- Contract changes must include or update unit tests.
-- Frontend PRs must not break existing pages.
+- Contract changes must include or update unit tests and test snapshots.
+- Frontend PRs must not break existing pages or introduce TypeScript errors.
 - Use Tailwind utilities only. Do not introduce external UI component libraries.
-- Keep scope focused on the linked issue.
-
-## Before Opening a PR
-
-- Run `soroban contract build` in `contracts/escrow`.
-- Run `cargo test` in `contracts/escrow`.
-- Run `cargo fmt --all -- --check` in `contracts/escrow` to verify formatting.
-- Run frontend checks for changed frontend files.
+- Keep scope focused on the linked issue — avoid unrelated changes.
+- Run `npm run typecheck` before pushing frontend changes.
 
 ## Pre-commit Hooks (Optional)
 
@@ -68,12 +161,57 @@ When making significant architectural changes, please submit an ADR in the `docs
 - [ ] Consequences list what becomes easier or harder.
 - [ ] Linked from relevant code comments if applicable.
 
-## Pull Request Requirements
+## Pull Request Process
 
-- Reference the issue number in the PR description.
-- Include a brief explanation of design choices and trade-offs.
-- Include screenshots or short clips for UI changes.
-- Maintainer review is required before merge.
+1. **Open an issue** (if one doesn't exist) describing the bug or feature.
+2. **Create a branch** from `main` following the naming convention above.
+3. **Implement your changes**, writing tests and updating docs as needed.
+4. **Run all checks locally**:
+   - Contract: `cargo test && cargo fmt --all -- --check && cargo clippy`
+   - Frontend: `npm run lint && npm run typecheck && npm test`
+5. **Push your branch** and open a pull request against `main`.
+6. **Fill out the PR template** — reference the issue, explain design choices,
+   and include screenshots or short clips for UI changes.
+7. **Request review** from a maintainer. All PRs require at least one approving
+   review before merge.
+8. **Address review feedback** by pushing additional commits or amending.
+
+### PR Title Format
+
+PR titles should follow the same conventional commit format:
+
+```
+feat(frontend): add network switcher dropdown
+fix(contract): handle zero-amount post_job edge case
+```
+
+See [PR title conventions](docs/pr-title-conventions.md) for details.
+
+### Test Requirements
+
+- **New contract functions**: must have unit tests covering happy path and error
+  conditions. Update test snapshots if needed.
+- **New frontend features**: must have at least one unit test covering the core
+  behavior. Complex UI components should include Storybook stories.
+- **Bug fixes**: must include a regression test preventing the bug from
+  recurring.
+- **Refactors**: existing tests must continue to pass. Update tests if behavior
+  changes.
+
+## Getting Help
+
+- **GitHub Issues**: Search existing issues or open a new one.
+- **GitHub Discussions**: For questions, ideas, or general conversation.
+- **Discord**: Join the Stellar Developer Discord for real-time help.
+
+Stuck on your first contribution? Look for issues labeled `good first issue` —
+they're curated for newcomers and have additional context in the comments.
+
+## Contributor Recognition
+
+All contributors are listed in our [README](README.md) and release notes.
+We value every contribution — from fixing a typo to shipping a major feature.
+First-time contributors get a special shoutout in the monthly community update.
 
 ## Issue Labels
 

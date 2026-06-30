@@ -1,0 +1,32 @@
+{
+  "testnet": {
+    "contractId": "",
+    "wasmHash": "",
+    "admin": "",
+    "nativeToken": "",
+    "rpcUrl": "https://soroban-testnet.stellar.org",
+    "passphrase": "Test SDF Network ; September 2015",
+    "horizonUrl": "https://horizon-testnet.stellar.org",
+    "explorerUrl": "https://stellar.expert/explorer/testnet/tx"
+  },
+  "futurenet": {
+    "contractId": "",
+    "wasmHash": "",
+    "admin": "",
+    "nativeToken": "",
+    "rpcUrl": "https://rpc-futurenet.stellar.org",
+    "passphrase": "Test SDF Future Network ; October 2022",
+    "horizonUrl": "https://horizon-futurenet.stellar.org",
+    "explorerUrl": "https://stellar.expert/explorer/futurenet/tx"
+  },
+  "mainnet": {
+    "contractId": "",
+    "wasmHash": "",
+    "admin": "",
+    "nativeToken": "",
+    "rpcUrl": "https://mainnet.sorobanrpc.com",
+    "passphrase": "Public Global Stellar Network ; September 2015",
+    "horizonUrl": "https://horizon.stellar.org",
+    "explorerUrl": "https://stellar.expert/explorer/public/tx"
+  }
+}

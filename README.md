@@ -262,6 +262,11 @@ Step-by-step video walkthroughs for the most common workflows. Videos are record
 
 For recording setup, script templates, format guidelines, and closed captioning standards, see [docs/VIDEO_TUTORIALS.md](docs/VIDEO_TUTORIALS.md).
 
+## Code of Conduct
+
+This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
+All contributors are expected to uphold our community standards.
+
 ## License
 
 MIT (`LICENSE`).

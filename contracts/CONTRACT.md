@@ -1,4 +1,91 @@
-# Escrow Contract — Gas & Fee Reference
+# Escrow Contract — Deployment, Gas & Fee Reference
+
+## Deployment Workflow
+
+Automated deployment scripts are available in the `scripts/` directory.
+
+### Quick Deploy
+
+```bash
+./scripts/deploy.sh testnet --admin <ADMIN_ADDRESS> --native-token <TOKEN_ADDRESS>
+```
+
+### Step-by-Step Deployment
+
+#### 1. Deploy Contract
+
+```bash
+./scripts/deploy.sh <testnet|futurenet|mainnet>
+```
+
+This script:
+- Configures the Soroban network if not already registered
+- Builds the contract WASM via `soroban contract build`
+- Deploys to the target network and returns the contract ID
+- Saves the contract address to `contract-addresses.json`
+- Generates `.env.<network>` with the contract ID and RPC URL
+
+#### 2. Initialize Contract
+
+```bash
+./scripts/init.sh <network> --contract-id <ID> --admin <ADMIN_ADDRESS> --native-token <TOKEN_ADDRESS>
+```
+
+Required parameters:
+- `--contract-id`: The contract ID returned from deployment
+- `--admin`: Admin wallet address (G...)
+- `--native-token`: Native token contract address
+
+Optional:
+- `--source`: Soroban identity (default: `stellarwork-admin`)
+
+#### 3. Configure Frontend
+
+```bash
+cp .env.<network> frontend/.env.local
+```
+
+Or set the environment variables manually:
+
+```bash
+NEXT_PUBLIC_CONTRACT_ID=<CONTRACT_ID>
+NEXT_PUBLIC_NETWORK=<testnet|futurenet|mainnet>
+NEXT_PUBLIC_SOROBAN_RPC=<RPC_URL>
+```
+
+### Contract Upgrade
+
+To upgrade the contract WASM on an existing deployment:
+
+```bash
+./scripts/upgrade.sh <network> <contract-id>
+```
+
+This installs the new WASM, obtains its hash, and invokes the contract's
+`upgrade` function with the new hash. The contract must support the upgrade
+interface.
+
+### Contract Addresses
+
+Deployed contract addresses are tracked in `contract-addresses.json` at the
+repository root. Each network entry stores:
+
+- `contractId` — The deployed contract address
+- `wasmHash` — The installed WASM hash (set after upgrade)
+- `admin` — Admin wallet address
+- `nativeToken` — Native token contract address
+- `rpcUrl` — RPC endpoint for the network
+- `passphrase` — Network passphrase
+- `horizonUrl` — Horizon API endpoint
+- `explorerUrl` — StellarExpert explorer base URL
+
+### Network Configuration
+
+| Network | RPC URL | Passphrase |
+|---------|---------|------------|
+| testnet | `https://soroban-testnet.stellar.org` | `Test SDF Network ; September 2015` |
+| futurenet | `https://rpc-futurenet.stellar.org` | `Test SDF Future Network ; October 2022` |
+| mainnet | `https://mainnet.sorobanrpc.com` | `Public Global Stellar Network ; September 2015` |
 
 ## Contract Size
 
