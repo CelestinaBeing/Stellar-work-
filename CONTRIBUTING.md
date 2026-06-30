@@ -56,6 +56,18 @@ The following checks are performed:
   pre-commit uninstall
   ```
 
+## Architecture Decision Records (ADRs)
+
+When making significant architectural changes, please submit an ADR in the `docs/adr/` directory.
+
+### ADR Creation Checklist
+- [ ] Use the standard template format.
+- [ ] Title, Status, and Date are clearly stated.
+- [ ] Context explains the motivating issue.
+- [ ] Decision details the proposed change.
+- [ ] Consequences list what becomes easier or harder.
+- [ ] Linked from relevant code comments if applicable.
+
 ## Pull Request Requirements
 
 - Reference the issue number in the PR description.

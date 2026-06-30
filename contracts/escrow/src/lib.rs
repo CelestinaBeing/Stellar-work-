@@ -115,6 +115,17 @@ pub struct DisputeResolution {
 }
 
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AuditEntry {
+    pub id: u64,
+    pub caller: Address,
+    pub operation: String,
+    pub job_id: Option<u64>,
+    pub timestamp: u64,
+    pub details: String,
+}
+
+#[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
     JobsCount,
@@ -156,6 +167,8 @@ pub enum DataKey {
     // Issue #460: two-step ownership transfer
     /// Address nominated to become the next admin (cleared on accept or cancel).
     PendingAdmin,
+    AuditLog(u64),
+    AuditCount,
 }
 
 #[contracterror]
@@ -207,6 +220,24 @@ pub struct EscrowContract;
 
 #[contractimpl]
 impl EscrowContract {
+    pub fn get_audit_entry(e: Env, id: u64) -> Option<AuditEntry> {
+        e.storage().persistent().get(&DataKey::AuditLog(id))
+    }
+
+    fn write_audit(e: &Env, caller: Address, operation: &str, job_id: Option<u64>, details: &str) {
+        let mut count: u64 = e.storage().persistent().get(&DataKey::AuditCount).unwrap_or(0);
+        count += 1;
+        let entry = AuditEntry {
+            id: count,
+            caller,
+            operation: String::from_str(e, operation),
+            job_id,
+            timestamp: e.ledger().timestamp(),
+            details: String::from_str(e, details),
+        };
+        e.storage().persistent().set(&DataKey::AuditLog(count), &entry);
+        e.storage().persistent().set(&DataKey::AuditCount, &count);
+    }
     pub fn initialize(e: Env, admin: Address, native_token: Address) {
         if e.storage().instance().has(&DataKey::Admin) {
             panic_with_error!(&e, Error::AlreadyInitialized);
@@ -299,8 +330,10 @@ impl EscrowContract {
 
         e.events().publish(
             (Symbol::new(&e, "job_created"),),
-            (job_id, client, amount, token),
+            (job_id, client.clone(), amount, token.clone()),
         );
+
+        Self::write_audit(&e, client, "post_job", Some(job_id), "Posted a job");
 
         job_id
     }
@@ -329,7 +362,9 @@ impl EscrowContract {
         bump_instance_ttl(&e);
 
         e.events()
-            .publish((Symbol::new(&e, "job_accepted"),), (job_id, freelancer));
+            .publish((Symbol::new(&e, "job_accepted"),), (job_id, freelancer.clone()));
+
+        Self::write_audit(&e, freelancer, "accept_job", Some(job_id), "Accepted job");
     }
 
     pub fn submit_work(e: Env, freelancer: Address, job_id: u64) {
@@ -352,7 +387,9 @@ impl EscrowContract {
         bump_instance_ttl(&e);
 
         e.events()
-            .publish((Symbol::new(&e, "job_submitted"),), (job_id, freelancer));
+            .publish((Symbol::new(&e, "job_submitted"),), (job_id, freelancer.clone()));
+
+        Self::write_audit(&e, freelancer, "submit_work", Some(job_id), "Submitted work for review");
     }
 
     pub fn approve_work(e: Env, client: Address, job_id: u64) {
