@@ -47,6 +47,15 @@ export default function CommandPalette() {
         keywords: ["disputes", "conflict"],
         run: () => router.push("/disputes"),
       },
+      {
+        id: "shortcuts",
+        label: "Show Shortcuts",
+        keywords: ["help", "keyboard", "shortcuts"],
+        run: () => {
+          const event = new KeyboardEvent("keydown", { key: "?" });
+          window.dispatchEvent(event);
+        },
+      },
     ];
 
     if (!wallet) {
