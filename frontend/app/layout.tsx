@@ -11,6 +11,7 @@ import { Navigation } from "./navigation";
 import { ScrollRestorer } from "@/components/ScrollRestorer";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import CommandPalette from "@/components/CommandPalette";
+import ShortcutCheatSheet from "@/components/ShortcutCheatSheet";
 import OnboardingProvider from "@/components/OnboardingProvider";
 import AnnouncementBanner from "@/components/AnnouncementBanner";
 import JsonLd from "@/components/JsonLd";
@@ -140,6 +141,7 @@ export default async function RootLayout({
           <AnnouncementBanner />
           <Navigation />
           <CommandPalette />
+          <ShortcutCheatSheet />
           <OnboardingProvider />
           <ScrollRestorer />
           <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-5xl flex-1 px-3 py-6 sm:px-4 sm:py-8">
