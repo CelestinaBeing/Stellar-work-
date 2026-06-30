@@ -1,6 +1,6 @@
 export interface AppConfig {
   contractId: string;
-  network: "mainnet" | "testnet";
+  network: "mainnet" | "testnet" | "futurenet";
   sorobanRpc: string;
   nativeToken: string;
   adminAddress: string;
@@ -25,15 +25,20 @@ export function validateConfig(): ConfigValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  const contractId = process.env.NEXT_PUBLIC_CONTRACT_ID ?? "";
+  const contractId =
+    process.env.NEXT_PUBLIC_CONTRACT_ID_TESTNET ??
+    process.env.NEXT_PUBLIC_CONTRACT_ID_FUTURENET ??
+    process.env.NEXT_PUBLIC_CONTRACT_ID_MAINNET ??
+    process.env.NEXT_PUBLIC_CONTRACT_ID ??
+    "";
   if (!contractId) {
     errors.push("NEXT_PUBLIC_CONTRACT_ID is required. Set it to the deployed escrow contract ID.");
   }
 
   const networkRaw = process.env.NEXT_PUBLIC_NETWORK ?? "";
-  let network: "mainnet" | "testnet" = DEFAULTS.network;
-  if (networkRaw === "mainnet") {
-    network = "mainnet";
+  let network: "mainnet" | "testnet" | "futurenet" = DEFAULTS.network;
+  if (networkRaw === "mainnet" || networkRaw === "futurenet") {
+    network = networkRaw;
   } else if (networkRaw && networkRaw !== "testnet") {
     warnings.push(`NEXT_PUBLIC_NETWORK has unrecognized value "${networkRaw}", defaulting to "testnet".`);
   }
@@ -81,7 +86,12 @@ export function getConfig(): AppConfig {
 }
 
 export function requireContractId(): string {
-  const contractId = process.env.NEXT_PUBLIC_CONTRACT_ID ?? "";
+  const contractId =
+    process.env.NEXT_PUBLIC_CONTRACT_ID_TESTNET ??
+    process.env.NEXT_PUBLIC_CONTRACT_ID_FUTURENET ??
+    process.env.NEXT_PUBLIC_CONTRACT_ID_MAINNET ??
+    process.env.NEXT_PUBLIC_CONTRACT_ID ??
+    "";
   if (!contractId) {
     throw new Error("NEXT_PUBLIC_CONTRACT_ID is not configured.");
   }

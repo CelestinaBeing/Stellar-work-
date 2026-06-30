@@ -380,6 +380,40 @@ export default function ProfilePageClient({ address }: { address: string }) {
     .filter((j) => j.role === "client" && j.job.status === "Completed")
     .reduce((sum, j) => sum + BigInt(j.job.amount), 0n);
 
+  const reputationScore = (() => {
+    const completed = completedAsFreelancer.length;
+    const testimonialCount = testimonials.length;
+    const hasVerified = isProfileComplete(portfolio);
+    let score = 1;
+    score += Math.min(completed, 4);
+    score += Math.min(testimonialCount * 0.5, 2);
+    if (hasVerified) score += 0.5;
+    return Math.min(score, 5);
+  })();
+
+  const activityTimeline = [...jobs]
+    .sort((a, b) => Number(b.job.created_at) - Number(a.job.created_at))
+    .slice(0, 10)
+    .map(({ id, job, role }) => ({
+      id,
+      role,
+      job,
+      description:
+        role === "client"
+          ? job.status === "Completed"
+            ? `Approved Job #${id}`
+            : job.status === "Cancelled"
+              ? `Cancelled Job #${id}`
+              : `Posted Job #${id}`
+          : job.status === "Completed"
+            ? `Completed Job #${id}`
+            : job.status === "Cancelled"
+              ? `Cancelled Job #${id}`
+              : job.status === "SubmittedForReview"
+                ? `Submitted work for Job #${id}`
+                : `Accepted Job #${id}`,
+    }));
+
   function startEdit() {
     setDraft({ ...portfolio, skills: [...portfolio.skills], links: [...portfolio.links], highlightedJobIds: [...portfolio.highlightedJobIds] });
     setEditMode(true);
@@ -529,6 +563,32 @@ export default function ProfilePageClient({ address }: { address: string }) {
         <ErrorBanner message={error} onDismiss={() => setError(null)} onRetry={() => void fetchJobs()} />
       )}
 
+      {isOwner && (
+        <div className="rounded-lg border border-blue-100 bg-blue-50/30 p-4 dark:border-blue-900/30 dark:bg-blue-950/20">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <svg className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+              <div>
+                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  Account Security &amp; Key Management
+                </p>
+                <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                  Your wallet is non-custodial. Ensure you have backed up your 12-word recovery phrase.
+                </p>
+              </div>
+            </div>
+            <Link
+              href="/help"
+              className="shrink-0 text-xs font-semibold text-blue-600 hover:underline dark:text-blue-400"
+            >
+              View Recovery Guide &rarr;
+            </Link>
+          </div>
+        </div>
+      )}
+
       {/* Stats row */}
       {loading ? (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -545,6 +605,35 @@ export default function ProfilePageClient({ address }: { address: string }) {
           <StatCard value={String(jobsCompleted)} label="Jobs Completed" />
           <StatCard value={toXlm(totalEarnedStroops)} label="XLM Earned" unit="XLM" />
           <StatCard value={toXlm(totalSpentStroops)} label="XLM Spent" unit="XLM" />
+        </div>
+      )}
+
+      {!loading && (
+        <div className="rounded-lg border border-slate-200 bg-white p-5">
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-semibold">Reputation</h2>
+            <span className="inline-flex items-center gap-0.5" aria-label={`Reputation score: ${reputationScore.toFixed(1)} out of 5`}>
+              {[1, 2, 3, 4, 5].map((star) => {
+                const filled = reputationScore >= star;
+                const half = !filled && reputationScore >= star - 0.5;
+                return (
+                  <svg
+                    key={star}
+                    className={`h-5 w-5 ${filled ? "text-amber-400" : half ? "text-amber-300" : "text-slate-200"}`}
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
+                    <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                  </svg>
+                );
+              })}
+            </span>
+            <span className="text-sm font-medium text-slate-600">{reputationScore.toFixed(1)}/5</span>
+          </div>
+          <p className="mt-1 text-xs text-slate-400">
+            Based on {completedAsFreelancer.length} completed jobs, {testimonials.length} testimonials, and portfolio completeness.
+          </p>
         </div>
       )}
 
@@ -796,6 +885,39 @@ export default function ProfilePageClient({ address }: { address: string }) {
             </div>
           )}
         </>
+      )}
+
+      {/* ── Activity Timeline ────────────────────────────────────────────────── */}
+      {!loading && activityTimeline.length > 0 && (
+        <div className="rounded-lg border border-slate-200 bg-white p-5">
+          <h2 className="text-lg font-semibold">Recent Activity</h2>
+          <div className="mt-3 space-y-3">
+            {activityTimeline.map((item) => (
+              <div key={`${item.id}-${item.role}`} className="flex items-start gap-3">
+                <div className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${
+                  item.job.status === "Completed" ? "bg-emerald-500" :
+                  item.job.status === "Cancelled" ? "bg-red-400" :
+                  item.job.status === "Disputed" ? "bg-amber-500" :
+                  "bg-blue-500"
+                }`} />
+                <div className="min-w-0 flex-1">
+                  <Link
+                    href={`/job/${item.id}`}
+                    className="text-sm font-medium text-blue-600 hover:underline"
+                  >
+                    {item.description}
+                  </Link>
+                  <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-400">
+                    <StatusPill status={item.job.status} />
+                    <span>{toXlm(item.job.amount)} XLM</span>
+                    <span>·</span>
+                    <span>{new Date(Number(item.job.created_at) * 1000).toLocaleDateString()}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* ── Job History ────────────────────────────────────────────────────── */}

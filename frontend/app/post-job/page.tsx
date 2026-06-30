@@ -6,7 +6,7 @@ import ErrorBanner from "@/components/ErrorBanner";
 import RichTextEditor, { htmlToPlainText } from "@/components/RichTextEditor";
 import { getExplorerTxUrl } from "@/lib/stellar";
 import { useWallet } from "@/lib/wallet-context";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   getRateLimitStatus,
   recordPostJob,
@@ -15,6 +15,45 @@ import {
 } from "@/lib/rate-limiter";
 
 const MIN_JOB_AMOUNT_XLM = 0.5;
+const DRAFT_STORAGE_KEY_PREFIX = "stellarwork:post-job-draft:";
+
+interface DraftData {
+  amount: string;
+  description: string;
+  deadline: string;
+  tokenAddress: string;
+  savedAt: number;
+}
+
+function getDraftKey(walletAddress: string | null): string {
+  return `${DRAFT_STORAGE_KEY_PREFIX}${walletAddress ?? "anonymous"}`;
+}
+
+function loadDraft(walletAddress: string | null): DraftData | null {
+  try {
+    const raw = localStorage.getItem(getDraftKey(walletAddress));
+    if (!raw) return null;
+    return JSON.parse(raw) as DraftData;
+  } catch {
+    return null;
+  }
+}
+
+function saveDraft(walletAddress: string | null, data: DraftData): void {
+  try {
+    localStorage.setItem(getDraftKey(walletAddress), JSON.stringify(data));
+  } catch {
+    // Storage quota exceeded — ignore silently.
+  }
+}
+
+function clearDraft(walletAddress: string | null): void {
+  try {
+    localStorage.removeItem(getDraftKey(walletAddress));
+  } catch {
+    // Ignore.
+  }
+}
 
 async function sha256Hex(input: string): Promise<string> {
   const bytes = new TextEncoder().encode(input);
@@ -51,6 +90,12 @@ export default function PostJobPage() {
     isLimited: false,
   });
 
+  // Draft saving state
+  const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
+  const [hasDraft, setHasDraft] = useState(false);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevWalletRef = useRef<string | null>(null);
+
   const parseAmountToStroops = (value: string): string | null => {
     const trimmed = value.trim();
     const amountPattern = /^\d+(\.\d+)?$/;
@@ -60,6 +105,51 @@ export default function PostJobPage() {
     const [whole = "0"] = trimmed.split(".");
     return `${whole}${fractional.padEnd(7, "0")}`;
   };
+
+  // Restore draft on mount and on wallet change
+  useEffect(() => {
+    const draft = loadDraft(wallet);
+    if (draft) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setAmount(draft.amount);
+      setDescription(draft.description);
+      setDeadline(draft.deadline);
+      setTokenAddress(
+        draft.tokenAddress || process.env.NEXT_PUBLIC_NATIVE_TOKEN || "",
+      );
+      setDraftSavedAt(draft.savedAt);
+      setHasDraft(true);
+    } else {
+      setHasDraft(false);
+      setDraftSavedAt(null);
+    }
+    prevWalletRef.current = wallet;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // When wallet address changes, clear current form and load draft for new wallet
+  useEffect(() => {
+    if (prevWalletRef.current === wallet) return;
+    prevWalletRef.current = wallet;
+    setAmount("");
+    setDescription("");
+    setDeadline("");
+    setTokenAddress(process.env.NEXT_PUBLIC_NATIVE_TOKEN ?? "");
+    setDraftSavedAt(null);
+    setHasDraft(false);
+    const draft = loadDraft(wallet);
+    if (draft) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setAmount(draft.amount);
+      setDescription(draft.description);
+      setDeadline(draft.deadline);
+      setTokenAddress(
+        draft.tokenAddress || process.env.NEXT_PUBLIC_NATIVE_TOKEN || "",
+      );
+      setDraftSavedAt(draft.savedAt);
+      setHasDraft(true);
+    }
+  }, [wallet]);
 
   useEffect(() => {
     if (!wallet) {
@@ -89,9 +179,82 @@ export default function PostJobPage() {
     return () => clearInterval(interval);
   }, []);
 
+  // Debounced auto-save draft on form value changes
+  useEffect(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    const isEmpty =
+      !amount.trim() && !htmlToPlainText(description).trim() && !deadline;
+    if (isEmpty) return;
+
+    debounceTimerRef.current = setTimeout(() => {
+      const now = Date.now();
+      saveDraft(wallet, {
+        amount,
+        description,
+        deadline,
+        tokenAddress,
+        savedAt: now,
+      });
+      setDraftSavedAt(now);
+      setHasDraft(true);
+    }, 800);
+
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, [amount, description, deadline, tokenAddress, wallet]);
+
+  // Warn on navigation away when unsaved changes exist
+  useEffect(() => {
+    const hasContent =
+      amount.trim() || htmlToPlainText(description).trim() || deadline;
+    if (!hasContent) return;
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [amount, description, deadline]);
+
+  function handleClearDraft() {
+    clearDraft(wallet);
+    setAmount("");
+    setDescription("");
+    setDeadline("");
+    setTokenAddress(process.env.NEXT_PUBLIC_NATIVE_TOKEN ?? "");
+    setDraftSavedAt(null);
+    setHasDraft(false);
+    setFieldErrors({});
+  }
+
   return (
     <section className="mx-auto max-w-2xl space-y-6">
       <h1 className="text-2xl font-semibold">Post Job</h1>
+
+      {hasDraft && draftSavedAt && (
+        <div className="flex items-center justify-between rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
+          <span>
+            Draft saved{" "}
+            {new Date(draftSavedAt).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </span>
+          <button
+            type="button"
+            onClick={handleClearDraft}
+            className="ml-4 rounded px-2 py-0.5 text-xs font-medium text-amber-700 hover:bg-amber-100"
+          >
+            Clear draft
+          </button>
+        </div>
+      )}
 
       <form
         className="space-y-4 rounded-lg border border-slate-200 bg-white p-5"
@@ -165,8 +328,6 @@ export default function PostJobPage() {
               setFieldErrors(nextFieldErrors);
               return;
             }
-            // Store the full HTML so rich text is preserved; derive plain text
-            // for the on-chain hash so plain-text consumers still work.
             const htmlContent = description.trim();
             const plainContent = htmlToPlainText(htmlContent);
             const hashHex = await sha256Hex(plainContent);
@@ -175,7 +336,6 @@ export default function PostJobPage() {
               ? Math.floor(new Date(deadline).getTime() / 1000).toString()
               : "0";
 
-            // Persist HTML for rich rendering; also store plain text under the hash key
             localStorage.setItem(`job-desc:${hashHex}`, htmlContent);
             const cid = await uploadToIpfs(htmlContent);
             const result = await postJob(
@@ -190,7 +350,7 @@ export default function PostJobPage() {
               try {
                 await storeDescriptionCid(wallet, hashHex, cid);
               } catch {
-                // CID storage is best-effort; description is still in localStorage
+                // CID storage is best-effort.
               }
             }
             if (result.hash) {
@@ -205,9 +365,14 @@ export default function PostJobPage() {
             if (successMessage !== lastAnnouncedSuccess) {
               setLastAnnouncedSuccess(successMessage);
             }
+
+            // Clear form and draft after successful submission.
+            clearDraft(wallet);
             setAmount("");
             setDescription("");
             setDeadline("");
+            setDraftSavedAt(null);
+            setHasDraft(false);
           } catch (e) {
             setError(e instanceof Error ? e.message : "Failed to post job. Please try again.");
           } finally {
