@@ -6,6 +6,7 @@ import InfoTooltip from "@/components/InfoTooltip";
 import NoResultsState from "@/components/NoResultsState";
 import JobCardSkeleton from "@/components/JobCardSkeleton";
 import SectionCard from "@/components/SectionCard";
+import ComparisonBar from "@/components/ComparisonBar";
 import JobFilterPanel, { DEFAULT_FILTERS, type JobFilters } from "@/components/JobFilterPanel";
 import { acceptJob, getDescriptionCid, getJob, getJobCount } from "@/lib/contract";
 import { fetchFromIpfs } from "@/lib/ipfs-service";
@@ -39,6 +40,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 
 const BOOKMARK_STORAGE_KEY = "stellarwork:bookmarked-jobs";
+const COMPARE_IDS_PARAM = "compare";
+const MAX_COMPARE_JOBS = 4;
 const VIEW_MODE_STORAGE_KEY = "stellarwork:jobs-view-mode";
 
 type JobsViewMode = "grid" | "list";
@@ -89,6 +92,19 @@ export default function HomePage() {
       dateRange: (params.get("dateRange") as JobFilters["dateRange"]) ?? "all",
       freelancerStatus: (params.get("freelancerStatus") as JobFilters["freelancerStatus"]) ?? "all",
     };
+  });
+
+  // Comparison selection state — persisted in URL query params
+  const [compareIds, setCompareIds] = useState<number[]>(() => {
+    if (typeof window === "undefined") return [];
+    const params = new URLSearchParams(window.location.search);
+    const raw = params.get(COMPARE_IDS_PARAM);
+    if (!raw) return [];
+    return raw
+      .split(",")
+      .map((s) => parseInt(s, 10))
+      .filter((n) => !Number.isNaN(n) && n > 0)
+      .slice(0, MAX_COMPARE_JOBS);
   });
 
   useEffect(() => {
@@ -162,16 +178,26 @@ export default function HomePage() {
     saveRecentSearches(recentSearches);
   }, [recentSearches]);
 
-  // Sync advanced filters to URL query params for bookmarking.
+  // Sync advanced filters and comparison selection to URL query params.
   useEffect(() => {
     const params = new URLSearchParams();
     if (advancedFilters.minAmount) params.set("minAmount", advancedFilters.minAmount);
     if (advancedFilters.maxAmount) params.set("maxAmount", advancedFilters.maxAmount);
     if (advancedFilters.dateRange !== "all") params.set("dateRange", advancedFilters.dateRange);
-    if (advancedFilters.freelancerStatus !== "all") params.set("freelancerStatus", advancedFilters.freelancerStatus);
+    if (advancedFilters.freelancerStatus !== "all")
+      params.set("freelancerStatus", advancedFilters.freelancerStatus);
+    if (compareIds.length > 0) params.set(COMPARE_IDS_PARAM, compareIds.join(","));
     const qs = params.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
-  }, [advancedFilters, pathname, router]);
+  }, [advancedFilters, compareIds, pathname, router]);
+
+  function toggleCompare(id: number) {
+    setCompareIds((prev) => {
+      if (prev.includes(id)) return prev.filter((v) => v !== id);
+      if (prev.length >= MAX_COMPARE_JOBS) return prev;
+      return [...prev, id];
+    });
+  }
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -721,6 +747,7 @@ export default function HomePage() {
                 setSearchTerm("");
                 setSortOrder("newest");
                 setAdvancedFilters(DEFAULT_FILTERS);
+                setCompareIds([]);
                 setPage(1);
               }}
             >
@@ -751,6 +778,19 @@ export default function HomePage() {
                 }`}
               >
                 <div className={viewMode === "list" ? "min-w-0 flex-1" : undefined}>
+                  <div className="mb-1 flex items-start gap-2">
+                    <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-500">
+                      <input
+                        type="checkbox"
+                        checked={compareIds.includes(id)}
+                        onChange={() => toggleCompare(id)}
+                        disabled={!compareIds.includes(id) && compareIds.length >= MAX_COMPARE_JOBS}
+                        className="h-3.5 w-3.5 rounded border-slate-300"
+                        aria-label={`Select Job #${id} for comparison`}
+                      />
+                      Compare
+                    </label>
+                  </div>
                   <Link href={`/job/${id}`} className="block" onClick={() => markJobViewed(id)}>
                     <h2 className="flex items-center gap-2 text-lg font-medium hover:underline">
                       Job #{id}
@@ -911,6 +951,16 @@ export default function HomePage() {
           </div>
         </div>
       )}
+
+      {/* Comparison bar — fixed to bottom when jobs are selected */}
+      {compareIds.length > 0 && (
+        <div className="pb-20" aria-hidden="true" />
+      )}
+      <ComparisonBar
+        selectedIds={compareIds}
+        onRemove={(id) => setCompareIds((prev) => prev.filter((v) => v !== id))}
+        onClear={() => setCompareIds([])}
+      />
     </section>
   );
 }
