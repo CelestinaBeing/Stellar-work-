@@ -9,6 +9,10 @@
 
 @layer base {
   :root {
+    /* Typography — controlled by TypographyProvider via inline style on <html> */
+    --font-size-base: 16px;
+    --line-height-base: 1.6;
+
     --color-bg: #f8fafc;
     --color-surface: #ffffff;
     --color-border: #e2e8f0;
@@ -105,11 +109,13 @@
 
 body {
   font-family: var(--font-geist-sans);
+  line-height: var(--line-height-base);
   padding-left: env(safe-area-inset-left);
   padding-right: env(safe-area-inset-right);
 }
 
 html {
+  font-size: var(--font-size-base);
   scroll-behavior: smooth;
 }
 
