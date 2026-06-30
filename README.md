@@ -2,6 +2,7 @@
 
 [![Production Deployment](https://img.shields.io/github/actions/workflow/status/your-org/Stellar-work-/deploy-production.yml?branch=main&label=production&logo=vercel)](https://github.com/your-org/Stellar-work-/actions/workflows/deploy-production.yml)
 [![Preview Deployments](https://img.shields.io/github/actions/workflow/status/your-org/Stellar-work-/deploy-preview.yml?label=preview&logo=vercel)](https://github.com/your-org/Stellar-work-/actions/workflows/deploy-preview.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/your-org/Stellar-work-/ci.yml?label=ci&logo=github)](https://github.com/your-org/Stellar-work-/actions/workflows/ci.yml)
 [![Frontend CI](https://img.shields.io/github/actions/workflow/status/your-org/Stellar-work-/frontend.yml?label=frontend+ci&logo=github)](https://github.com/your-org/Stellar-work-/actions/workflows/frontend.yml)
 [![Contract CI](https://img.shields.io/github/actions/workflow/status/your-org/Stellar-work-/contract.yml?label=contract+ci&logo=rust)](https://github.com/your-org/Stellar-work-/actions/workflows/contract.yml)
 
