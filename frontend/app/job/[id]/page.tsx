@@ -91,6 +91,7 @@ export default function JobDetailPage() {
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [bookmarkAnimating, setBookmarkAnimating] = useState(false);
+  const [statusAnnouncement, setStatusAnnouncement] = useState("");
 
   const numericId = Number(id);
   const isIdValid = !isNaN(numericId) && numericId > 0 && Number.isInteger(numericId);
@@ -218,6 +219,7 @@ export default function JobDetailPage() {
       }
       await load();
       showSuccess(successMessage);
+      setStatusAnnouncement(successMessage);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Transaction failed.";
       setError(message);
@@ -441,6 +443,11 @@ export default function JobDetailPage() {
 
   return (
     <section className="space-y-6 pb-6 sm:pb-6">
+      {/* Screen reader announcer for job status transitions */}
+      <p role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {statusAnnouncement}
+      </p>
+
       <div className="flex items-center gap-4">
         <Link href="/" className="text-sm text-blue-600 hover:underline">
           Back
@@ -449,7 +456,7 @@ export default function JobDetailPage() {
       </div>
 
       {error && (
-        <p role="alert" className="rounded-md bg-red-100 p-3 text-sm text-red-700">
+        <p role="alert" aria-live="assertive" aria-atomic="true" className="rounded-md bg-red-100 p-3 text-sm text-red-700">
           {error}
         </p>
       )}
