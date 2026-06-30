@@ -4,7 +4,6 @@ import {
   Account,
   BASE_FEE,
   Contract,
-  Networks,
   nativeToScVal,
   rpc,
   scValToNative,
@@ -18,22 +17,33 @@ import {
   requestAccess,
   signTransaction as freighterSignTransaction,
 } from "@stellar/freighter-api";
+import {
+  type StellarNetwork,
+  getPersistedNetwork,
+  getNetworkConfig,
+} from "@/lib/network-config";
 
-const getRpcUrl = () =>
-  process.env.NEXT_PUBLIC_SOROBAN_RPC ?? "https://soroban-testnet.stellar.org";
-
-export type StellarNetwork = "mainnet" | "testnet";
-
-export function getConfiguredNetwork(): StellarNetwork | null {
-  const value = process.env.NEXT_PUBLIC_NETWORK;
-  if (value === "mainnet" || value === "testnet") {
-    return value;
+function getActiveNetwork(): StellarNetwork {
+  if (typeof window !== "undefined") {
+    return getPersistedNetwork();
   }
-  return null;
+  const envNetwork = process.env.NEXT_PUBLIC_NETWORK;
+  if (envNetwork === "mainnet" || envNetwork === "testnet" || envNetwork === "futurenet") {
+    return envNetwork;
+  }
+  return "testnet";
 }
 
-const getNetworkPassphrase = () =>
-  getConfiguredNetwork() === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
+const getRpcUrl = () => getNetworkConfig(getActiveNetwork()).rpcUrl;
+
+export type { StellarNetwork };
+
+export function getConfiguredNetwork(): StellarNetwork | null {
+  const network = getActiveNetwork();
+  return network;
+}
+
+const getNetworkPassphrase = () => getNetworkConfig(getActiveNetwork()).passphrase;
 
 export const getNetwork = (): StellarNetwork =>
   getConfiguredNetwork() ?? "testnet";
@@ -68,11 +78,7 @@ export async function getPublicKey(): Promise<string | null> {
 
 export async function getNativeBalance(publicKey: string): Promise<string> {
   try {
-    const horizonUrl =
-      getNetwork() === "mainnet"
-        ? "https://horizon.stellar.org"
-        : "https://horizon-testnet.stellar.org";
-    // We use Horizon.Server to get balances. The method is loadAccount.
+    const horizonUrl = getNetworkConfig(getActiveNetwork()).horizonUrl;
     const server = new Horizon.Server(horizonUrl);
     const account = await server.loadAccount(publicKey);
     const nativeBalance = account.balances.find((b) => b.asset_type === "native");
@@ -93,7 +99,6 @@ export async function signTransaction(xdrValue: string): Promise<string> {
   return "signedTxXdr" in signed ? signed.signedTxXdr : signed;
 }
 
-// Use a stable placeholder account for read-only simulations when no wallet is connected.
 const READONLY_SOURCE = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 
 export async function callContract(
@@ -195,9 +200,11 @@ export function decodeScVal<T = unknown>(value: xdr.ScVal): T {
 export { nativeToScVal, xdr };
 
 export function getExplorerTxUrl(txHash: string): string {
-  const base =
-    getNetwork() === "mainnet"
-      ? "https://stellar.expert/explorer/public/tx"
-      : "https://stellar.expert/explorer/testnet/tx";
+  const base = getNetworkConfig(getActiveNetwork()).explorerUrl;
   return `${base}/${txHash}`;
+}
+
+export function truncateAddress(address: string, chars = 4): string {
+  if (!address || address.length <= chars * 2 + 3) return address;
+  return `${address.slice(0, chars + 2)}...${address.slice(-chars)}`;
 }

@@ -6,13 +6,14 @@ import { useWallet, WalletButton } from "@/lib/wallet-context";
 import { useMessaging } from "@/lib/messaging-context";
 import { useTheme } from "@/components/ThemeProvider";
 import { useLocale } from "next-intl";
-import { useState, useEffect, useRef } from "react";
+import { memo, useState, useEffect, useRef } from "react";
 import NetworkBadge from "@/components/NetworkBadge";
+import NetworkSwitcher from "@/components/NetworkSwitcher";
 import NotificationInbox from "@/components/NotificationInbox";
 import WalletMenu from "@/components/WalletMenu";
 import VoiceNav from "@/components/VoiceNav";
 
-function ThemeToggle() {
+const ThemeToggle = memo(function ThemeToggle() {
   const { theme, setTheme } = useTheme();
 
   const cycle = () => {
@@ -43,9 +44,9 @@ function ThemeToggle() {
       )}
     </button>
   );
-}
+});
 
-function LanguageSwitcher() {
+const LanguageSwitcher = memo(function LanguageSwitcher() {
   const locale = useLocale();
 
   const cycleLocale = () => {
@@ -64,9 +65,9 @@ function LanguageSwitcher() {
       {locale === "en" ? "ES" : "EN"}
     </button>
   );
-}
+});
 
-export function Navigation() {
+export const Navigation = memo(function Navigation() {
   const pathname = usePathname();
   const { wallet } = useWallet();
   const { unreadCount } = useMessaging();
@@ -214,6 +215,7 @@ export function Navigation() {
           <NotificationInbox />
           <ThemeToggle />
           <LanguageSwitcher />
+          <NetworkSwitcher />
           <WalletMenu />
         </div>
 
@@ -314,4 +316,4 @@ export function Navigation() {
       )}
     </header>
   );
-}
+});
