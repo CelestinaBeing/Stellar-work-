@@ -14,6 +14,7 @@ import {
   getPublicKey,
   getNativeBalance,
 } from "@/lib/stellar";
+import LegalConsentModal, { hasAcceptedLegal, acceptLegal } from "@/components/LegalConsentModal";
 import { toXlm } from "@/lib/format";
 
 // Storage keys
@@ -71,6 +72,7 @@ function persistLastAccount(address: string | null) {
 
 export function WalletProvider({ children }: { children: ReactNode }) {
   const [wallet, setWallet] = useState<string | null>(null);
+  const [showLegalModal, setShowLegalModal] = useState(false);
   const [isSwitching, setIsSwitching] = useState(false);
   const connectPromiseRef = useRef<Promise<string> | null>(null);
 
@@ -84,6 +86,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  useEffect(() => {
+    if (wallet && !hasAcceptedLegal()) {
+      setShowLegalModal(true);
+    }
+  }, [wallet]);
   const clearCachedData = useCallback(() => {
     clearJobCache();
   }, []);
@@ -111,6 +118,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const declineLegal = useCallback(() => {
+    setShowLegalModal(false);
+    setWallet(null);
+  }, []);
   /**
    * Switch to a different Freighter account.
    * Triggers Freighter's account selection, clears job cache, then updates state.
@@ -136,6 +147,12 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       value={{ wallet, connectWallet, disconnectWallet, switchAccount, clearCachedData, isSwitching }}
     >
       {children}
+      {showLegalModal && (
+        <LegalConsentModal
+          onAccept={() => setShowLegalModal(false)}
+          onClose={declineLegal}
+        />
+      )}
     </WalletContext.Provider>
   );
 }

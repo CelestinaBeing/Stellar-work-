@@ -88,6 +88,44 @@ export async function approveWork(client: string, jobId: string) {
   ]);
 }
 
+export async function batchApproveJobs(client: string, jobIds: string[]) {
+  return callContract(requireContractId(), "batch_approve_jobs", [
+    nativeToScVal(client, { type: "address" }),
+    nativeToScVal(jobIds.map((id) => nativeToScVal(id, { type: "u64" })), { type: "vec" }),
+  ]);
+}
+
+export async function setPaymentPreference(
+  freelancer: string,
+  jobId: string,
+  desiredToken: string,
+  maxSlippageBps: number,
+) {
+  return callContract(requireContractId(), "set_payment_preference", [
+    nativeToScVal(freelancer, { type: "address" }),
+    nativeToScVal(jobId, { type: "u64" }),
+    nativeToScVal(desiredToken, { type: "address" }),
+    nativeToScVal(maxSlippageBps, { type: "u32" }),
+  ]);
+}
+
+export async function getSwapQuote(
+  fromToken: string,
+  toToken: string,
+  amount: string,
+) {
+  return callContract(
+    requireContractId(),
+    "get_swap_quote",
+    [
+      nativeToScVal(fromToken, { type: "address" }),
+      nativeToScVal(toToken, { type: "address" }),
+      nativeToScVal(amount, { type: "i128" }),
+    ],
+    { readOnly: true },
+  );
+}
+
 export async function cancelJob(client: string, jobId: string) {
   return callContract(getActiveContractId(), "cancel_job", [
     nativeToScVal(client, { type: "address" }),

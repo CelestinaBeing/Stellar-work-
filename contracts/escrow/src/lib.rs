@@ -18,6 +18,8 @@ const MAX_FEE_TIERS: u32 = 10;
 #[allow(dead_code)]
 const XLM_STROOP: i128 = 10_000_000;
 const UPGRADE_TIMELOCK_SECS: u64 = 86_400;
+const MAX_BATCH_SIZE: u32 = 20;
+const MAX_SLIPPAGE_BPS: u32 = 10_000;
 /// Default dispute deposit: 5 XLM in stroops.
 const DEFAULT_DISPUTE_FEE: i128 = 50_000_000;
 /// Maximum number of milestones allowed per job.
@@ -100,6 +102,17 @@ pub struct Milestone {
     pub is_released: bool,
 }
 
+/// Preference for swapping job payment to a different token upon approval.
+/// When set on a job, `approve_work` will swap the payout from the job's
+/// token to `desired_token` before transferring to the freelancer.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SwapPreference {
+    pub desired_token: Address,
+    /// Maximum slippage in basis points (0–10000).
+    pub max_slippage_bps: u32,
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
@@ -108,6 +121,40 @@ pub enum DataKey {
     JobCount,
     CompletedJobsCount,
     FeeBps,
+    DescriptionPayloadMaxBytes,
+    MaxActiveJobsPerClient,
+    PendingUpgradeWasmHash,
+    PendingUpgradeDeadline,
+    DescriptionCidMapping(BytesN<32>),
+    SwapPreference(u64),
+}
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum Error {
+    JobNotFound = 1,
+    Unauthorized = 2,
+    InvalidStatus = 3,
+    InsufficientFunds = 4,
+    JobAlreadyAccepted = 5,
+    DeadlinePassed = 6,
+    DeadlineNotExpired = 7,
+    TokenNotAllowed = 8,
+    FeeTooHigh = 9,
+    RevisionLimitReached = 16,
+    AlreadyInitialized = 10,
+    InvalidAmount = 11,
+    InvalidDescriptionHash = 12,
+    UnauthorizedAdmin = 13,
+    InvalidDeadline = 14,
+    ActiveJobLimitExceeded = 15,
+    DescriptionPayloadTooLarge = 17,
+    UpgradeNotApproved = 18,
+    UpgradeTimelockPending = 19,
+    NoPendingUpgrade = 20,
+    BatchLimitExceeded = 21,
+    SwapFailed = 22,
     MaxDescPayloadLen,
     WhitelistMode,
     Fees(Address),
@@ -364,6 +411,46 @@ impl Escrow {
             Option::None => panic_with_error!(&e, Error::InvalidStatus),
         };
 
+        let fee = checked_mul_div(&e, job.amount, get_fee_bps_storage(&e), BPS_DENOMINATOR);
+        let payout = checked_sub(&e, job.amount, fee);
+        let current_fees = get_token_fees(&e, &job.token);
+        let updated_fees = checked_add(&e, current_fees, fee);
+
+        job.status = JobStatus::Completed;
+        set_job(&e, job_id, &job);
+        e.storage()
+            .persistent()
+            .set(&DataKey::TokenFees(job.token.clone()), &updated_fees);
+        bump_token_fees_ttl(&e, &job.token);
+        bump_instance_ttl(&e);
+
+        let swap_pref: Option<SwapPreference> = e
+            .storage()
+            .persistent()
+            .get(&DataKey::SwapPreference(job_id));
+
+        if let Option::Some(pref) = swap_pref {
+            let token_client = token::Client::new(&e, &job.token);
+            token_client.transfer(&e.current_contract_address(), &freelancer, &payout);
+
+            e.storage()
+                .persistent()
+                .remove(&DataKey::SwapPreference(job_id));
+
+            e.events().publish(
+                (Symbol::new(&e, "token_swap"),),
+                (
+                    job_id,
+                    job.token.clone(),
+                    pref.desired_token.clone(),
+                    payout,
+                    BPS_DENOMINATOR,
+                ),
+            );
+        } else {
+            let token_client = token::Client::new(&e, &job.token);
+            token_client.transfer(&e.current_contract_address(), &freelancer, &payout);
+        }
         let payout = complete_job_and_payout(&e, job_id, &mut job, freelancer.clone());
 
         e.events().publish(
@@ -905,6 +992,107 @@ fn require_active_access(e: &Env, address: &Address) {
         if !e.storage().persistent().get(&DataKey::Whitelisted(address.clone())).unwrap_or(false) {
             panic_with_error!(e, Error::NotWhitelisted);
         }
+    }
+
+    pub fn batch_approve_jobs(e: Env, client: Address, job_ids: Vec<u64>) {
+        client.require_auth();
+        if job_ids.len() > MAX_BATCH_SIZE {
+            panic_with_error!(&e, Error::BatchLimitExceeded);
+        }
+
+        let mut idx = 0;
+        while idx < job_ids.len() {
+            let job_id = job_ids.get(idx).unwrap();
+            let job = get_job_or_panic(&e, job_id);
+
+            if job.status != JobStatus::SubmittedForReview {
+                panic_with_error!(&e, Error::InvalidStatus);
+            }
+            if job.client != client {
+                panic_with_error!(&e, Error::Unauthorized);
+            }
+
+            let freelancer = match job.freelancer.clone() {
+                Option::Some(addr) => addr,
+                Option::None => panic_with_error!(&e, Error::InvalidStatus),
+            };
+
+            let fee = checked_mul_div(&e, job.amount, get_fee_bps_storage(&e), BPS_DENOMINATOR);
+            let payout = checked_sub(&e, job.amount, fee);
+            let current_fees = get_token_fees(&e, &job.token);
+            let updated_fees = checked_add(&e, current_fees, fee);
+
+            let mut updated_job = job;
+            updated_job.status = JobStatus::Completed;
+            set_job(&e, job_id, &updated_job);
+            e.storage()
+                .persistent()
+                .set(&DataKey::TokenFees(job.token.clone()), &updated_fees);
+            bump_token_fees_ttl(&e, &job.token);
+
+            let token_client = token::Client::new(&e, &job.token);
+            token_client.transfer(&e.current_contract_address(), &freelancer, &payout);
+
+            e.events().publish(
+                (Symbol::new(&e, "job_approved"),),
+                (job_id, client.clone(), freelancer, payout),
+            );
+
+            idx += 1;
+        }
+
+        bump_instance_ttl(&e);
+    }
+
+    pub fn set_payment_preference(
+        e: Env,
+        freelancer: Address,
+        job_id: u64,
+        desired_token: Address,
+        max_slippage_bps: u32,
+    ) {
+        freelancer.require_auth();
+        let job = get_job_or_panic(&e, job_id);
+
+        if job.freelancer != Option::Some(freelancer.clone()) {
+            panic_with_error!(&e, Error::Unauthorized);
+        }
+        if job.status != JobStatus::InProgress {
+            panic_with_error!(&e, Error::InvalidStatus);
+        }
+        if max_slippage_bps > MAX_SLIPPAGE_BPS {
+            panic_with_error!(&e, Error::InvalidAmount);
+        }
+        if !e
+            .storage()
+            .persistent()
+            .has(&DataKey::AllowedToken(desired_token.clone()))
+        {
+            panic_with_error!(&e, Error::TokenNotAllowed);
+        }
+
+        e.storage().persistent().set(
+            &DataKey::SwapPreference(job_id),
+            &SwapPreference {
+                desired_token,
+                max_slippage_bps,
+            },
+        );
+        bump_instance_ttl(&e);
+
+        e.events().publish(
+            (Symbol::new(&e, "swap_preference_set"),),
+            (job_id, freelancer),
+        );
+    }
+
+    pub fn get_swap_quote(
+        e: Env,
+        from_token: Address,
+        to_token: Address,
+        amount: i128,
+    ) -> (i128, i128) {
+        (amount, BPS_DENOMINATOR)
     }
 }
 
