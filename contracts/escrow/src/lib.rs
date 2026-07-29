@@ -95,6 +95,49 @@ pub struct Job {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RetainerStatus {
+    Active,
+    Completed,
+    Cancelled,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Retainer {
+    pub client: Address,
+    pub freelancer: Address,
+    pub amount: i128,
+    pub interval_ledgers: u64,
+    pub max_renewals: u32,
+    pub current_renewal: u32,
+    pub status: RetainerStatus,
+    pub created_at: u64,
+    pub token: Address,
+    pub last_renewed_at: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ChainStatus {
+    Pending,
+    Exported,
+    Imported,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CrossChainJob {
+    pub source_chain: String,
+    pub source_job_id: u64,
+    pub origin_contract: Address,
+    pub freelancer: Address,
+    pub amount: i128,
+    pub status: ChainStatus,
+    pub token: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Milestone {
     pub id: u32,
     pub description_hash: Bytes,
@@ -172,6 +215,11 @@ pub enum Error {
     DescriptionCID(Bytes),
     Job(u64),
     Milestones(u64),
+    Retainer(u64),
+    RetainerCount,
+    CrossChainJob(u64),
+    CrossChainJobCount,
+    ExportedJobHash(u64),
 }
 
 fn check_admin(env: &Env) -> Address {
@@ -535,8 +583,6 @@ impl Escrow {
         get_approval_window_storage(&e)
     }
 
-    pub fn cancel_job(e: Env, client: Address, job_id: u64) {
-        let mut job = get_job_or_panic(&e, job_id);
     pub fn cancel_job(env: Env, client: Address, job_id: u64) -> Result<(), Error> {
         client.require_auth();
 
@@ -6643,20 +6689,6 @@ mod test {
         assert_eq!(ids.len(), 20, "must have 20 unique job IDs");
     }
 
-    // ── Token conservation invariant ───────────────────────────────────────
-    //
-    // After a full lifecycle (post → accept → submit → approve), verify that
-    // total token supply is conserved: client_initial = client_final +
-    // freelancer_final + platform_fees.
-
-        env.events().publish(
-            (symbol_short!("mstone"),),
-            (job_id, milestone_id, client),
-        );
-
-        Ok(())
-    }
-
     pub fn get_milestones(env: Env, job_id: u64) -> Vec<Milestone> {
         env.storage()
             .persistent()
@@ -6898,6 +6930,267 @@ mod test {
         );
 
         Ok(())
+    }
+
+    pub fn create_retainer(
+        env: Env,
+        client: Address,
+        freelancer: Address,
+        amount: i128,
+        interval_ledgers: u64,
+        max_renewals: u32,
+        token: Address,
+    ) -> Result<u64, Error> {
+        client.require_auth();
+
+        let count: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::RetainerCount)
+            .unwrap_or(0);
+        let retainer_id = count + 1;
+        env.storage()
+            .instance()
+            .set(&DataKey::RetainerCount, &retainer_id);
+
+        let retainer = Retainer {
+            client: client.clone(),
+            freelancer: freelancer.clone(),
+            amount,
+            interval_ledgers,
+            max_renewals,
+            current_renewal: 0,
+            status: RetainerStatus::Active,
+            created_at: env.ledger().timestamp(),
+            token: token.clone(),
+            last_renewed_at: env.ledger().timestamp(),
+        };
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Retainer(retainer_id), &retainer);
+
+        env.events().publish(
+            (symbol_short!("ret_created"),),
+            (retainer_id, client, freelancer, amount, max_renewals),
+        );
+
+        Ok(retainer_id)
+    }
+
+    pub fn renew_retainer(env: Env, caller: Address, retainer_id: u64) -> Result<(), Error> {
+        caller.require_auth();
+
+        let mut retainer: Retainer = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Retainer(retainer_id))
+            .expect("Retainer not found");
+
+        if retainer.status != RetainerStatus::Active {
+            return Err(Error::InvalidJobStatus);
+        }
+
+        let now = env.ledger().timestamp();
+        if now < retainer.last_renewed_at + retainer.interval_ledgers {
+            return Err(Error::DeadlineNotExpired);
+        }
+
+        if retainer.current_renewal >= retainer.max_renewals {
+            retainer.status = RetainerStatus::Completed;
+            env.storage()
+                .persistent()
+                .set(&DataKey::Retainer(retainer_id), &retainer);
+            env.events().publish(
+                (symbol_short!("ret_complete"),),
+                (retainer_id, retainer.client, retainer.freelancer),
+            );
+            return Ok(());
+        }
+
+        retainer.current_renewal += 1;
+        retainer.last_renewed_at = now;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Retainer(retainer_id), &retainer);
+
+        let count: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::JobCount)
+            .unwrap_or(0);
+        let job_id = count + 1;
+        env.storage()
+            .instance()
+            .set(&DataKey::JobCount, &job_id);
+        let job = Job {
+            client: retainer.client.clone(),
+            freelancer: retainer.freelancer.clone(),
+            amount: retainer.amount,
+            description_hash: Bytes::new(&env),
+            status: JobStatus::Open,
+            created_at: now,
+            deadline: 0,
+            token: retainer.token.clone(),
+            revision_count: 0,
+            submitted_at: 0,
+        };
+        save_job(&env, job_id, &job);
+
+        env.events().publish(
+            (symbol_short!("ret_renewed"),),
+            (retainer_id, job_id, retainer.client, retainer.freelancer, retainer.amount),
+        );
+
+        Ok(())
+    }
+
+    pub fn cancel_retainer(env: Env, client: Address, retainer_id: u64) -> Result<(), Error> {
+        client.require_auth();
+
+        let mut retainer: Retainer = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Retainer(retainer_id))
+            .expect("Retainer not found");
+
+        if retainer.client != client {
+            return Err(Error::Unauthorized);
+        }
+        if retainer.status != RetainerStatus::Active {
+            return Err(Error::InvalidJobStatus);
+        }
+
+        retainer.status = RetainerStatus::Cancelled;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Retainer(retainer_id), &retainer);
+
+        env.events().publish(
+            (symbol_short!("ret_cancelled"),),
+            (retainer_id, client, retainer.freelancer),
+        );
+
+        Ok(())
+    }
+
+    pub fn get_retainer(env: Env, retainer_id: u64) -> Retainer {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Retainer(retainer_id))
+            .expect("Retainer not found")
+    }
+
+    pub fn export_job(
+        env: Env,
+        client: Address,
+        job_id: u64,
+        target_chain: String,
+        target_contract: Address,
+    ) -> Result<u64, Error> {
+        client.require_auth();
+
+        let job = get_job(&env, job_id);
+        if job.client != client {
+            return Err(Error::NotJobClient);
+        }
+
+        let mut updated = job;
+        updated.status = JobStatus::Cancelled;
+        save_job(&env, job_id, &updated);
+
+        let count: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::CrossChainJobCount)
+            .unwrap_or(0);
+        let cc_id = count + 1;
+        env.storage()
+            .instance()
+            .set(&DataKey::CrossChainJobCount, &cc_id);
+
+        let cross = CrossChainJob {
+            source_chain: String::from_str(&env, "stellar"),
+            source_job_id: job_id,
+            origin_contract: target_contract,
+            freelancer: job.freelancer,
+            amount: job.amount,
+            status: ChainStatus::Exported,
+            token: job.token,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::CrossChainJob(cc_id), &cross);
+
+        env.events().publish(
+            (symbol_short!("job_exported"),),
+            (cc_id, job_id, client, job.freelancer, job.amount, target_chain),
+        );
+
+        Ok(cc_id)
+    }
+
+    pub fn import_job(
+        env: Env,
+        cross_chain_id: u64,
+        source_chain: String,
+        source_job_id: u64,
+        freelancer: Address,
+        amount: i128,
+        token: Address,
+    ) -> Result<u64, Error> {
+        let _admin = check_admin(&env);
+
+        let count: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::JobCount)
+            .unwrap_or(0);
+        let job_id = count + 1;
+        env.storage()
+            .instance()
+            .set(&DataKey::JobCount, &job_id);
+
+        let job = Job {
+            client: Address::from_string(&String::from_str(
+                &env,
+                "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+            )),
+            freelancer,
+            amount,
+            description_hash: Bytes::new(&env),
+            status: JobStatus::Open,
+            created_at: env.ledger().timestamp(),
+            deadline: 0,
+            token,
+            revision_count: 0,
+            submitted_at: 0,
+        };
+        save_job(&env, job_id, &job);
+
+        let mut cross: CrossChainJob = env
+            .storage()
+            .persistent()
+            .get(&DataKey::CrossChainJob(cross_chain_id))
+            .expect("Cross-chain job not found");
+        cross.status = ChainStatus::Imported;
+        env.storage()
+            .persistent()
+            .set(&DataKey::CrossChainJob(cross_chain_id), &cross);
+
+        env.events().publish(
+            (symbol_short!("job_imported"),),
+            (job_id, cross_chain_id, source_chain, source_job_id),
+        );
+
+        Ok(job_id)
+    }
+
+    pub fn get_cross_chain_job(env: Env, cross_chain_id: u64) -> CrossChainJob {
+        env.storage()
+            .persistent()
+            .get(&DataKey::CrossChainJob(cross_chain_id))
+            .expect("Cross-chain job not found")
     }
 }
 
