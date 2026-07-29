@@ -120,6 +120,22 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     savePreferences(preferences);
   }, [preferences]);
 
+  const addNotification = useCallback(
+    (event: NotificationEvent, jobId: number, message: string) => {
+      if (!preferences[event]) return;
+      const notification: Notification = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        event,
+        jobId,
+        message,
+        timestamp: Date.now(),
+        seen: false,
+      };
+      setNotifications((prev) => [notification, ...prev].slice(0, 100));
+    },
+    [preferences],
+  );
+
   useEffect(() => {
     const trackedStr = JSON.stringify(Array.from(trackedJobs.entries()));
     if (trackedStr === prevTrackedRef.current) return;
@@ -165,22 +181,6 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   const unreadCount = useMemo(
     () => notifications.filter((n) => !n.seen).length,
     [notifications],
-  );
-
-  const addNotification = useCallback(
-    (event: NotificationEvent, jobId: number, message: string) => {
-      if (!preferences[event]) return;
-      const notification: Notification = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        event,
-        jobId,
-        message,
-        timestamp: Date.now(),
-        seen: false,
-      };
-      setNotifications((prev) => [notification, ...prev].slice(0, 100));
-    },
-    [preferences],
   );
 
   const markAsSeen = useCallback((id: string) => {

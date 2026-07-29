@@ -11,9 +11,10 @@ import {
   submitWork,
   enforceDeadline,
 } from "@/lib/contract";
-import CancelJobConfirmModal from "@/components/CancelJobConfirmModal";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import EmptyState from "@/components/EmptyState";
 import ErrorBanner from "@/components/ErrorBanner";
+import ExportButton from "@/components/ExportButton";
 import InfoTooltip from "@/components/InfoTooltip";
 import JobCardSkeleton from "@/components/JobCardSkeleton";
 import NoResultsState from "@/components/NoResultsState";
@@ -22,9 +23,16 @@ import StatusPill from "@/components/StatusPill";
 import { useToast } from "@/components/ToastProvider";
 import { useNotifications, getEventLabel } from "@/lib/notifications-context";
 import { formatDeadline, toXlm } from "@/lib/format";
+import { isConfirmSuppressed, CONFIRM_KEYS } from "@/lib/confirm-prefs";
 import { useWallet } from "@/lib/wallet-context";
 import type { Job, JobStatus, NotificationEvent } from "@/lib/types";
 import { useEffect, useState, useCallback, useRef, type KeyboardEvent } from "react";
+
+type PendingDashAction = {
+  type: "cancelJob" | "approveWork" | "submitWork" | "freelancerCancelJob";
+  jobId: number;
+  amountXlm: string;
+};
 
 const STATUS_OPTIONS: JobStatus[] = [
   "Open",
@@ -52,6 +60,23 @@ const STATUS_LABELS: Record<JobStatus, string> = {
   Disputed: "Disputed",
 };
 
+const BOOKMARK_STORAGE_KEY = "stellarwork:bookmarked-jobs";
+
+function loadBookmarkedIds(): number[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const stored = localStorage.getItem(BOOKMARK_STORAGE_KEY);
+    if (!stored) return [];
+    const parsed = JSON.parse(stored) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((entry) => Number(entry))
+      .filter((value) => Number.isInteger(value) && value > 0);
+  } catch {
+    return [];
+  }
+}
+
 export default function DashboardPage() {
   const { wallet, connectWallet } = useWallet();
   const { showSuccess, showError } = useToast();
@@ -61,10 +86,17 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
-  const [pendingCancelJobId, setPendingCancelJobId] = useState<number | null>(null);
+  const [pendingAction, setPendingAction] = useState<PendingDashAction | null>(null);
   const [completedJobsCount, setCompletedJobsCount] = useState<number | null>(null);
   const [selectedJobs, setSelectedJobs] = useState<Set<number>>(new Set());
   const [batchLoading, setBatchLoading] = useState(false);
+  const [bookmarkedJobs, setBookmarkedJobs] = useState<Array<{ id: number; job: Job }>>([]);
+  const [bookmarkedLoading, setBookmarkedLoading] = useState(false);
+  // Issue #453 — Bulk job cancellation
+  const [selectedJobIds, setSelectedJobIds] = useState<Set<number>>(new Set());
+  const [showBulkConfirm, setShowBulkConfirm] = useState(false);
+  const [bulkCancelProgress, setBulkCancelProgress] = useState<{ done: number; total: number; failed: number[] } | null>(null);
+  const bookmarkedIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const filterOptions: Array<JobStatus | "All"> = ["All", ...STATUS_OPTIONS];
   const filterButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
@@ -100,11 +132,55 @@ export default function DashboardPage() {
       fetchJobs();
     } else {
       setAllJobs([]);
+      setBookmarkedJobs([]);
       setCompletedJobsCount(null);
       setLoading(false);
       setError(null);
     }
   }, [wallet, fetchJobs]);
+
+  useEffect(() => {
+    if (!wallet) return;
+
+    const fetchBookmarked = async () => {
+      const ids = loadBookmarkedIds();
+      if (ids.length === 0) {
+        setBookmarkedJobs([]);
+        return;
+      }
+      setBookmarkedLoading(true);
+      try {
+        const results = await Promise.all(
+          ids.map(async (id) => {
+            try {
+              const job = await getJob(String(id));
+              return job ? { id, job } : null;
+            } catch {
+              return null;
+            }
+          }),
+        );
+        setBookmarkedJobs(
+          results.filter(
+            (item): item is { id: number; job: Job } => item !== null,
+          ),
+        );
+      } catch {
+        setBookmarkedJobs([]);
+      } finally {
+        setBookmarkedLoading(false);
+      }
+    };
+
+    fetchBookmarked();
+
+    bookmarkedIntervalRef.current = setInterval(fetchBookmarked, 30000);
+    return () => {
+      if (bookmarkedIntervalRef.current) {
+        clearInterval(bookmarkedIntervalRef.current);
+      }
+    };
+  }, [wallet]);
 
   const handleAction = async (
     fn: () => Promise<unknown>,
@@ -150,17 +226,133 @@ export default function DashboardPage() {
   };
 
   const handleConfirmCancel = async () => {
-    if (!wallet || pendingCancelJobId === null) {
-      return;
+    if (!wallet || pendingAction === null) return;
+    const jobId = pendingAction.jobId;
+    const type = pendingAction.type;
+    setPendingAction(null);
+    if (type === "cancelJob") {
+      await handleAction(
+        () => cancelJob(wallet, String(jobId)),
+        jobId,
+        { event: "job_cancelled", message: `Job #${jobId} was cancelled and funds refunded.` },
+      );
+    } else if (type === "approveWork") {
+      await handleAction(
+        () => approveWork(wallet, String(jobId)),
+        jobId,
+        { event: "work_approved", message: `Work for Job #${jobId} was approved and payment released.` },
+      );
+    } else if (type === "submitWork") {
+      await handleAction(
+        () => submitWork(wallet, String(jobId)),
+        jobId,
+        { event: "work_submitted", message: `Work for Job #${jobId} was submitted for review.` },
+      );
+    } else if (type === "freelancerCancelJob") {
+      await handleAction(
+        () => freelancerCancelJob(wallet, String(jobId)),
+        jobId,
+        undefined
+      );
     }
-    const jobId = pendingCancelJobId;
-    await handleAction(
-      () => cancelJob(wallet, String(jobId)),
-      jobId,
-      { event: "job_cancelled", message: `Job #${jobId} was cancelled and funds refunded.` },
-    );
-    setPendingCancelJobId(null);
   };
+
+  /** Request a confirmed action. Skips the dialog if the user previously chose "Don't show again". */
+  const requestDashAction = useCallback((
+    type: PendingDashAction["type"],
+    jobId: number,
+    amountXlm: string,
+  ) => {
+    const keyMap: Record<PendingDashAction["type"], string> = {
+      cancelJob: CONFIRM_KEYS.cancelJob,
+      approveWork: CONFIRM_KEYS.approveWork,
+      submitWork: CONFIRM_KEYS.submitWork,
+      freelancerCancelJob: CONFIRM_KEYS.freelancerCancelJob,
+    };
+    if (isConfirmSuppressed(keyMap[type])) {
+      // Execute directly without dialog
+      const pending: PendingDashAction = { type, jobId, amountXlm };
+      setPendingAction(pending);
+      // Trigger confirm immediately by calling handleConfirmCancel after state flush
+      // We do this via a synthetic pending that handleConfirmCancel reads
+      void (async () => {
+        if (!wallet) return;
+        if (type === "cancelJob") {
+          await handleAction(
+            () => cancelJob(wallet, String(jobId)),
+            jobId,
+            { event: "job_cancelled", message: `Job #${jobId} was cancelled and funds refunded.` },
+          );
+        } else if (type === "approveWork") {
+          await handleAction(
+            () => approveWork(wallet, String(jobId)),
+            jobId,
+            { event: "work_approved", message: `Work for Job #${jobId} was approved and payment released.` },
+          );
+        } else if (type === "submitWork") {
+          await handleAction(
+            () => submitWork(wallet, String(jobId)),
+            jobId,
+            { event: "work_submitted", message: `Work for Job #${jobId} was submitted for review.` },
+          );
+        } else if (type === "freelancerCancelJob") {
+          await handleAction(
+            () => freelancerCancelJob(wallet, String(jobId)),
+            jobId,
+            undefined
+          );
+        }
+        setPendingAction(null);
+      })();
+    } else {
+      setPendingAction({ type, jobId, amountXlm });
+    }
+  }, [wallet, handleAction]);
+
+  const handleToggleSelect = useCallback((id: number) => {
+    setSelectedJobIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleSelectAllOpen = useCallback(() => {
+    const openClientJobIds = allJobs
+      .filter((j) => j.job.client === wallet && j.job.status === "Open")
+      .map((j) => j.id);
+    setSelectedJobIds(new Set(openClientJobIds));
+  }, [allJobs, wallet]);
+
+  const handleDeselectAll = useCallback(() => {
+    setSelectedJobIds(new Set());
+  }, []);
+
+  const handleBulkCancel = useCallback(async () => {
+    if (!wallet || selectedJobIds.size === 0) return;
+    setShowBulkConfirm(false);
+    const ids = Array.from(selectedJobIds);
+    setBulkCancelProgress({ done: 0, total: ids.length, failed: [] });
+    const failed: number[] = [];
+    for (const id of ids) {
+      try {
+        await cancelJob(wallet, String(id));
+      } catch {
+        failed.push(id);
+      }
+      setBulkCancelProgress((prev) =>
+        prev ? { ...prev, done: prev.done + 1, failed } : null,
+      );
+    }
+    setBulkCancelProgress(null);
+    setSelectedJobIds(new Set());
+    await fetchJobs();
+    if (failed.length === 0) {
+      showSuccess(`${ids.length} job${ids.length > 1 ? "s" : ""} cancelled and funds refunded.`);
+    } else {
+      showError(`${ids.length - failed.length} cancelled; ${failed.length} failed (Job${failed.length > 1 ? "s" : ""} #${failed.join(", #")}).`);
+    }
+  }, [wallet, selectedJobIds, fetchJobs, showSuccess, showError]);
 
   const postedJobs = allJobs.filter((j) => j.job.client === wallet);
   const acceptedJobs = allJobs.filter((j) => j.job.freelancer === wallet);
@@ -210,7 +402,10 @@ export default function DashboardPage() {
 
   return (
     <section className="space-y-6">
-      <h1 className="text-2xl font-semibold">Dashboard</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">Dashboard</h1>
+        <ExportButton jobs={allJobs} wallet={wallet} />
+      </div>
 
       <div className="grid grid-cols-2 gap-4 sm:max-w-md">
         <div className="interactive-card p-4">
@@ -312,7 +507,7 @@ export default function DashboardPage() {
             role="client"
             actionLoading={actionLoading}
             onAction={handleAction}
-            onRequestCancel={setPendingCancelJobId}
+            onRequestAction={requestDashAction}
             onClearFilter={() => setStatusFilter("All")}
             selectedJobs={selectedJobs}
             onToggleSelect={(id) => {
@@ -325,6 +520,12 @@ export default function DashboardPage() {
             }}
             onBatchApprove={handleBatchApprove}
             batchLoading={batchLoading}
+            selectedJobIds={selectedJobIds}
+            onToggleSelect={handleToggleSelect}
+            onSelectAll={handleSelectAllOpen}
+            onDeselectAll={handleDeselectAll}
+            onBulkCancel={() => setShowBulkConfirm(true)}
+            bulkCancelProgress={bulkCancelProgress}
           />
           <JobSection
             title="Accepted Jobs"
@@ -336,22 +537,156 @@ export default function DashboardPage() {
             role="freelancer"
             actionLoading={actionLoading}
             onAction={handleAction}
-            onRequestCancel={setPendingCancelJobId}
+            onRequestAction={requestDashAction}
             onClearFilter={() => setStatusFilter("All")}
           />
+
+          <div>
+            <h2 className="text-lg font-semibold">Saved Jobs</h2>
+            <p className="mb-3 text-sm text-slate-500">Jobs you bookmarked for later</p>
+            {bookmarkedLoading && bookmarkedJobs.length === 0 && (
+              <div className="grid gap-4 sm:grid-cols-2" aria-label="Loading saved jobs">
+                {Array.from({ length: 2 }).map((_, index) => (
+                  <JobCardSkeleton key={index} />
+                ))}
+              </div>
+            )}
+            {!bookmarkedLoading && bookmarkedJobs.length === 0 && (
+              <EmptyState
+                title="No saved jobs yet"
+                description="Bookmark jobs from the home page to see them here."
+              />
+            )}
+            {bookmarkedJobs.length > 0 && (
+              <ul className="grid list-none gap-4 sm:grid-cols-2" aria-label="Saved jobs">
+                {bookmarkedJobs.map(({ id, job }) => {
+                  const isOwnJob =
+                    (wallet && job.client === wallet) || job.freelancer === wallet;
+                  return (
+                    <li key={id}>
+                      <article className="interactive-card h-full p-4">
+                        <div className="flex items-start justify-between gap-2">
+                          <h3 className="font-medium">Job #{id}</h3>
+                          <StatusPill status={job.status} />
+                        </div>
+                        <div className="mt-2 space-y-1 text-sm text-slate-600">
+                          <p className="flex min-w-0 items-baseline gap-1">
+                            <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap tabular-nums">
+                              {toXlm(job.amount)}
+                            </span>
+                            <span className="shrink-0">XLM</span>
+                          </p>
+                          <p className="truncate font-mono text-xs text-slate-400">
+                            Token: {job.token ? `${job.token.slice(0, 8)}...${job.token.slice(-4)}` : "N/A"}
+                          </p>
+                          <p>
+                            {(() => {
+                              const deadline = formatDeadline(job.deadline);
+                              if (!deadline) return "Deadline: No deadline";
+                              return `Deadline: ${deadline.isPast ? "Past due" : deadline.relative} • ${deadline.exact}`;
+                            })()}
+                          </p>
+                        </div>
+                        {isOwnJob && (
+                          <p className="mt-2 text-xs text-amber-600">This is your own job</p>
+                        )}
+                      </article>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
         </>
       )}
 
-      {pendingCancelJobId !== null && (
-        <CancelJobConfirmModal
-          jobId={String(pendingCancelJobId)}
-          loading={actionLoading === pendingCancelJobId}
-          onClose={() => setPendingCancelJobId(null)}
-          onConfirm={() => {
-            void handleConfirmCancel();
-          }}
-        />
+      {/* Issue #453 — Bulk cancel confirmation dialog */}
+      {showBulkConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-black/5">
+            <h2 className="text-base font-semibold text-slate-900">Cancel {selectedJobIds.size} jobs?</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              This will cancel all {selectedJobIds.size} selected open jobs and refund the escrowed funds to your wallet. This action cannot be undone.
+            </p>
+            <ul className="mt-3 max-h-40 overflow-y-auto space-y-1 text-sm text-slate-500">
+              {Array.from(selectedJobIds).map((id) => {
+                const entry = postedJobs.find((j) => j.id === id);
+                return (
+                  <li key={id} className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-1.5">
+                    <span>Job #{id}</span>
+                    {entry && <span className="text-xs tabular-nums">{toXlm(entry.job.amount)} XLM refund</span>}
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                className="rounded-lg px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 transition-colors"
+                onClick={() => setShowBulkConfirm(false)}
+              >
+                Go back
+              </button>
+              <button
+                className="rounded-lg bg-red-600 px-5 py-2 text-sm font-medium text-white hover:bg-red-700 transition-colors"
+                onClick={() => void handleBulkCancel()}
+              >
+                Cancel {selectedJobIds.size} jobs
+              </button>
+            </div>
+          </div>
+        </div>
       )}
+
+      {pendingAction !== null && (() => {
+        const { type, jobId, amountXlm } = pendingAction;
+        const configs = {
+          cancelJob: {
+            title: "Cancel this job?",
+            description: "Cancelling will close the job and return the escrowed funds to your wallet. This action cannot be undone.",
+            consequences: ["The job moves to Cancelled status permanently.", "The freelancer (if any) will lose access to the job."],
+            impactLine: `${amountXlm} will be refunded to your wallet`,
+            confirmLabel: "Yes, cancel job",
+            variant: "danger" as const,
+            suppressKey: CONFIRM_KEYS.cancelJob,
+          },
+          approveWork: {
+            title: "Approve and release payment?",
+            description: "Approving the submitted work releases the escrowed funds to the freelancer minus the 2.5% platform fee. This action is final.",
+            consequences: ["The job moves to Completed status permanently.", "Platform fee (2.5%) will be deducted before transfer."],
+            impactLine: `${amountXlm} (minus 2.5% fee) will be released to the freelancer`,
+            confirmLabel: "Yes, approve & pay",
+            variant: "primary" as const,
+            suppressKey: CONFIRM_KEYS.approveWork,
+          },
+          submitWork: {
+            title: "Submit work for review?",
+            description: "Submitting notifies the client that your work is ready for review. This action cannot be undone.",
+            consequences: ["The job moves to Submitted for Review status.", "The client can then approve or raise a dispute."],
+            confirmLabel: "Yes, submit work",
+            variant: "warning" as const,
+            suppressKey: CONFIRM_KEYS.submitWork,
+          },
+          freelancerCancelJob: {
+            title: "Cancel this job?",
+            description: "Cancelling as a freelancer returns the full escrowed amount to the client. This action cannot be undone.",
+            consequences: ["The job moves to Cancelled status permanently.", "The full escrow amount is refunded to the client."],
+            impactLine: `${amountXlm} will be refunded to the client`,
+            confirmLabel: "Yes, cancel job",
+            variant: "danger" as const,
+            suppressKey: CONFIRM_KEYS.freelancerCancelJob,
+          },
+        };
+        const cfg = configs[type];
+        return (
+          <ConfirmDialog
+            open={true}
+            {...cfg}
+            loading={actionLoading === jobId}
+            onConfirm={() => void handleConfirmCancel()}
+            onCancel={() => setPendingAction(null)}
+          />
+        );
+      })()}
     </section>
   );
 }
@@ -366,12 +701,18 @@ function JobSection({
   role,
   actionLoading,
   onAction,
-  onRequestCancel,
+  onRequestAction,
   onClearFilter,
   selectedJobs,
   onToggleSelect,
   onBatchApprove,
   batchLoading,
+  selectedJobIds = new Set(),
+  onToggleSelect,
+  onSelectAll,
+  onDeselectAll,
+  onBulkCancel,
+  bulkCancelProgress,
 }: {
   title: string;
   subtitle: string;
@@ -382,7 +723,7 @@ function JobSection({
   role: "client" | "freelancer";
   actionLoading: number | null;
   onAction: (fn: () => Promise<unknown>, jobId: number, notification?: { event: NotificationEvent; message: string }) => Promise<void>;
-  onRequestCancel: (jobId: number) => void;
+  onRequestAction: (type: PendingDashAction["type"], jobId: number, amountXlm: string) => void;
   onClearFilter: () => void;
   selectedJobs?: Set<number>;
   onToggleSelect?: (id: number) => void;
@@ -414,6 +755,44 @@ function JobSection({
             >
               {batchLoading ? "Approving..." : `Approve Selected (${selectedJobs?.size ?? 0})`}
             </button>
+  selectedJobIds?: Set<number>;
+  onToggleSelect?: (id: number) => void;
+  onSelectAll?: () => void;
+  onDeselectAll?: () => void;
+  onBulkCancel?: () => void;
+  bulkCancelProgress?: { done: number; total: number; failed: number[] } | null;
+}) {
+  const openClientJobs = role === "client" ? jobs.filter((j) => j.job.status === "Open") : [];
+  const selectionCount = openClientJobs.filter((j) => selectedJobIds.has(j.id)).length;
+  const allOpenSelected = openClientJobs.length > 0 && openClientJobs.every((j) => selectedJobIds.has(j.id));
+
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-lg font-semibold">{title}</h2>
+          <p className="text-sm text-slate-500">{subtitle}</p>
+        </div>
+        {/* Bulk cancel controls — client only, at least 1 open job */}
+        {role === "client" && openClientJobs.length > 0 && (
+          <div className="flex items-center gap-2">
+            <button
+              className="text-xs text-slate-500 underline underline-offset-2 hover:text-slate-800"
+              onClick={allOpenSelected ? onDeselectAll : onSelectAll}
+            >
+              {allOpenSelected ? "Deselect all" : "Select all open"}
+            </button>
+            {selectionCount >= 2 && (
+              <button
+                disabled={!!bulkCancelProgress}
+                className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-60 transition-colors"
+                onClick={onBulkCancel}
+              >
+                {bulkCancelProgress
+                  ? `Cancelling… ${bulkCancelProgress.done}/${bulkCancelProgress.total}`
+                  : `Cancel selected (${selectionCount})`}
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -449,6 +828,23 @@ function JobSection({
               </li>
             ))}
           </ul>
+        <ul className="grid list-none gap-4 sm:grid-cols-2" aria-label={title}>
+          {jobs.map(({ id, job }) => (
+            <li key={id}>
+              <JobCard
+                id={id}
+                job={job}
+                wallet={wallet}
+                role={role}
+                isLoading={actionLoading === id}
+                onAction={onAction}
+                onRequestAction={onRequestAction}
+                isSelected={selectedJobIds.has(id)}
+                onToggleSelect={job.status === "Open" && role === "client" ? onToggleSelect : undefined}
+              />
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
@@ -463,6 +859,8 @@ function JobCard({
   onAction,
   onRequestCancel,
   isSelected,
+  onRequestAction,
+  isSelected = false,
   onToggleSelect,
 }: {
   id: number;
@@ -472,10 +870,12 @@ function JobCard({
   isLoading: boolean;
   onAction: (fn: () => Promise<unknown>, jobId: number, notification?: { event: NotificationEvent; message: string }) => Promise<void>;
   onRequestCancel: (jobId: number) => void;
+  onRequestAction: (type: PendingDashAction["type"], jobId: number, amountXlm: string) => void;
   isSelected?: boolean;
   onToggleSelect?: (id: number) => void;
 }) {
   const actions = getActions(id, job, wallet, role);
+  const amountXlm = `${toXlm(job.amount)} XLM`;
 
   return (
     <article className={`interactive-card h-full p-4 ${isSelected ? "ring-2 ring-emerald-400" : ""}`}>
@@ -488,6 +888,16 @@ function JobCard({
               onChange={() => onToggleSelect(id)}
               className="h-4 w-4 rounded border-slate-300 text-emerald-600"
               aria-label={`Select Job #${id} for batch approval`}
+    <article className={`interactive-card h-full p-4 ${isSelected ? "ring-2 ring-red-400" : ""}`}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2">
+          {onToggleSelect && (
+            <input
+              type="checkbox"
+              aria-label={`Select Job #${id} for bulk cancellation`}
+              checked={isSelected}
+              onChange={() => onToggleSelect(id)}
+              className="h-4 w-4 rounded border-slate-300 accent-red-600 cursor-pointer"
             />
           )}
           <h3 className="font-medium">Job #{id}</h3>
@@ -500,6 +910,9 @@ function JobCard({
             {toXlm(job.amount)}
           </span>
           <span className="shrink-0">XLM</span>
+        </p>
+        <p className="truncate font-mono text-xs text-slate-400">
+          Token: {job.token ? `${job.token.slice(0, 8)}...${job.token.slice(-4)}` : "N/A"}
         </p>
         <p>
           {(() => {
@@ -517,24 +930,38 @@ function JobCard({
       </div>
       {actions.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
-          {actions.map((action) => (
-            <button
-              key={action.label}
-              disabled={isLoading}
-              className="min-w-0 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none sm:max-w-44"
-              onClick={() => {
-                if (action.label === "Cancel Job") {
-                  onRequestCancel(id);
-                  return;
-                }
-                void onAction(() => action.fn(), id, action.notification ?? undefined);
-              }}
-              title={action.label}
-              aria-haspopup={action.label === "Cancel Job" ? "dialog" : undefined}
-            >
-              <span className="block truncate">{isLoading ? "..." : action.label}</span>
-            </button>
-          ))}
+          {actions.map((action) => {
+            // Actions that need a confirmation dialog
+            const needsConfirm =
+              action.label === "Cancel Job" ||
+              action.label === "Approve Work" ||
+              action.label === "Submit Work";
+
+            const actionTypeMap: Record<string, PendingDashAction["type"]> = {
+              "Cancel Job": role === "freelancer" ? "freelancerCancelJob" : "cancelJob",
+              "Approve Work": "approveWork",
+              "Submit Work": "submitWork",
+            };
+
+            return (
+              <button
+                key={action.label}
+                disabled={isLoading}
+                className="min-w-0 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none sm:max-w-44"
+                onClick={() => {
+                  if (needsConfirm) {
+                    onRequestAction(actionTypeMap[action.label], id, amountXlm);
+                    return;
+                  }
+                  void onAction(() => action.fn(), id, action.notification ?? undefined);
+                }}
+                title={action.label}
+                aria-haspopup={needsConfirm ? "dialog" : undefined}
+              >
+                <span className="block truncate">{isLoading ? "..." : action.label}</span>
+              </button>
+            );
+          })}
         </div>
       )}
     </article>
@@ -544,7 +971,7 @@ function JobCard({
 type Action = {
   label: string;
   fn: () => Promise<unknown>;
-  notification: { event: NotificationEvent; message: string } | null;
+  notification?: { event: NotificationEvent; message: string };
 };
 
 function getActions(
@@ -575,7 +1002,7 @@ function getActions(
       actions.push({
         label: "Enforce Deadline",
         fn: () => enforceDeadline(wallet, jobId),
-        notification: null,
+        notification: undefined,
       });
     }
   }
@@ -590,7 +1017,7 @@ function getActions(
       actions.push({
         label: "Cancel Job",
         fn: () => freelancerCancelJob(wallet, jobId),
-        notification: null,
+        notification: undefined,
       });
     }
   }

@@ -2,19 +2,28 @@
 
 import {
   getFees,
-  getJob,
-  getJobCount,
   getNativeToken,
   withdrawFees,
+  adminGetAllJobs,
+  adminGetJobCount,
+  setWhitelistMode,
+  addToBlacklist,
+  removeFromBlacklist,
+  addToWhitelist,
+  removeFromWhitelist,
+  isWhitelistModeEnabled,
 } from "@/lib/contract";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import EmptyState from "@/components/EmptyState";
 import ErrorBanner from "@/components/ErrorBanner";
 import StatusPill from "@/components/StatusPill";
 import SectionCard from "@/components/SectionCard";
 import { formatDeadline, toXlm } from "@/lib/format";
+import { isConfirmSuppressed, CONFIRM_KEYS } from "@/lib/confirm-prefs";
 import { useWallet } from "@/lib/wallet-context";
 import type { Job, JobStatus } from "@/lib/types";
 import { useEffect, useState, useCallback } from "react";
+import { ANNOUNCEMENT_STORAGE_KEY, type AnnouncementConfig } from "@/components/AnnouncementBanner";
 
 const TX_LOG_KEY = "stellarwork:admin-withdrawals";
 
@@ -45,6 +54,18 @@ export default function AdminPage() {
   const [withdrawing, setWithdrawing] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [withdrawals, setWithdrawals] = useState<WithdrawalTx[]>([]);
+  const [showWithdrawConfirm, setShowWithdrawConfirm] = useState(false);
+
+  // Announcement state
+  const [announcementMsg, setAnnouncementMsg] = useState("");
+  const [announcementType, setAnnouncementType] = useState<"info" | "warning" | "error" | "success">("info");
+  const [announcementEnabled, setAnnouncementEnabled] = useState(false);
+  const [announcementTtl, setAnnouncementTtl] = useState<number>(0);
+
+  // Access Control state
+  const [accessTarget, setAccessTarget] = useState("");
+  const [isWhitelistMode, setIsWhitelistMode] = useState(false);
+  const [accessUpdating, setAccessUpdating] = useState(false);
 
   const fetchAdminData = useCallback(async (walletAddress: string) => {
     setLoading(true);
@@ -57,20 +78,22 @@ export default function AdminPage() {
       const accrued = await getFees(token);
       setFees(BigInt(accrued));
 
-      const count = await getJobCount();
-      const fetched: Array<{ id: number; job: Job }> = [];
-      for (let id = 1; id <= count; id += 1) {
-        const job = await getJob(String(id));
-        if (job) fetched.push({ id, job });
-      }
-      setJobs(fetched);
-
       const envAdmin = process.env.NEXT_PUBLIC_ADMIN_ADDRESS;
+      let actualAdmin = walletAddress;
       if (envAdmin) {
         setIsAdmin(walletAddress === envAdmin);
+        actualAdmin = envAdmin;
       } else {
         setIsAdmin(true);
       }
+
+      const count = await adminGetJobCount(actualAdmin);
+      const jobsList = await adminGetAllJobs(actualAdmin, 0, count);
+      const fetched = jobsList.map((job, idx) => ({ id: idx + 1, job }));
+      setJobs(fetched);
+
+      const whitelistMode = await isWhitelistModeEnabled();
+      setIsWhitelistMode(whitelistMode);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load admin data.");
       setIsAdmin(false);
@@ -84,6 +107,14 @@ export default function AdminPage() {
       try {
         const raw = localStorage.getItem(TX_LOG_KEY);
         if (raw) setWithdrawals(JSON.parse(raw) as WithdrawalTx[]);
+        
+        const rawAnn = localStorage.getItem(ANNOUNCEMENT_STORAGE_KEY);
+        if (rawAnn) {
+          const parsed = JSON.parse(rawAnn) as AnnouncementConfig;
+          setAnnouncementMsg(parsed.message);
+          setAnnouncementType(parsed.type);
+          setAnnouncementEnabled(parsed.enabled);
+        }
       } catch {
         /* ignore */
       }
@@ -115,6 +146,7 @@ export default function AdminPage() {
 
   const handleWithdraw = async () => {
     if (!nativeToken) return;
+    setShowWithdrawConfirm(false);
     setWithdrawing(true);
     setError(null);
     setSuccessMessage(null);
@@ -140,6 +172,61 @@ export default function AdminPage() {
       }
     } finally {
       setWithdrawing(false);
+    }
+  };
+
+  const handlePublishAnnouncement = () => {
+    const config: AnnouncementConfig = {
+      id: `${Date.now()}`,
+      type: announcementType,
+      message: announcementMsg,
+      enabled: announcementEnabled,
+      expiresAt: announcementTtl > 0 ? Date.now() + announcementTtl * 60 * 60 * 1000 : null,
+    };
+    try {
+      localStorage.setItem(ANNOUNCEMENT_STORAGE_KEY, JSON.stringify(config));
+      window.dispatchEvent(new Event("stellarwork:announcement-updated"));
+      setSuccessMessage("Announcement updated successfully.");
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (e) {
+      setError("Failed to publish announcement.");
+    }
+  };
+
+  const handleAccessAction = async (action: "addBlacklist" | "removeBlacklist" | "addWhitelist" | "removeWhitelist") => {
+    if (!wallet || !accessTarget) return;
+    setAccessUpdating(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const actualAdmin = process.env.NEXT_PUBLIC_ADMIN_ADDRESS || wallet;
+      if (action === "addBlacklist") await addToBlacklist(actualAdmin, accessTarget);
+      else if (action === "removeBlacklist") await removeFromBlacklist(actualAdmin, accessTarget);
+      else if (action === "addWhitelist") await addToWhitelist(actualAdmin, accessTarget);
+      else if (action === "removeWhitelist") await removeFromWhitelist(actualAdmin, accessTarget);
+      setSuccessMessage(`Successfully processed ${action} for ${accessTarget}`);
+      setAccessTarget("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Access control action failed.");
+    } finally {
+      setAccessUpdating(false);
+    }
+  };
+
+  const handleToggleWhitelistMode = async () => {
+    if (!wallet) return;
+    setAccessUpdating(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const actualAdmin = process.env.NEXT_PUBLIC_ADMIN_ADDRESS || wallet;
+      await setWhitelistMode(actualAdmin, !isWhitelistMode);
+      setIsWhitelistMode(!isWhitelistMode);
+      setSuccessMessage(`Whitelist mode ${!isWhitelistMode ? "enabled" : "disabled"}.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to toggle whitelist mode.");
+    } finally {
+      setAccessUpdating(false);
     }
   };
 
@@ -219,11 +306,177 @@ export default function AdminPage() {
         <button
           disabled={withdrawing || fees <= 0n}
           className="mt-4 rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
-          onClick={handleWithdraw}
+          onClick={() => {
+            if (isConfirmSuppressed(CONFIRM_KEYS.withdrawFees)) {
+              void handleWithdraw();
+            } else {
+              setShowWithdrawConfirm(true);
+            }
+          }}
+          aria-haspopup="dialog"
         >
           {withdrawing ? "Withdrawing..." : "Withdraw Fees"}
         </button>
       </SectionCard>
+
+      <SectionCard title="Announcement Management">
+        <div className="space-y-4 mt-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700">Message (HTML supported)</label>
+            <textarea
+              className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+              rows={3}
+              value={announcementMsg}
+              onChange={(e) => setAnnouncementMsg(e.target.value)}
+              placeholder="E.g. Scheduled maintenance on Friday at 2AM UTC."
+            />
+          </div>
+          
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div>
+              <label className="block text-sm font-medium text-slate-700">Type</label>
+              <select
+                className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                value={announcementType}
+                onChange={(e) => setAnnouncementType(e.target.value as any)}
+              >
+                <option value="info">Info (Blue)</option>
+                <option value="warning">Warning (Yellow)</option>
+                <option value="error">Error (Red)</option>
+                <option value="success">Success (Green)</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700">Duration (TTL)</label>
+              <select
+                className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                value={announcementTtl}
+                onChange={(e) => setAnnouncementTtl(Number(e.target.value))}
+              >
+                <option value={0}>No Expiration</option>
+                <option value={1}>1 Hour</option>
+                <option value={24}>24 Hours</option>
+                <option value={168}>1 Week</option>
+              </select>
+            </div>
+            <div className="flex items-center pt-6">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="rounded border-slate-300 text-slate-900 focus:ring-slate-900"
+                  checked={announcementEnabled}
+                  onChange={(e) => setAnnouncementEnabled(e.target.checked)}
+                />
+                <span className="text-sm font-medium text-slate-700">Enable Announcement</span>
+              </label>
+            </div>
+          </div>
+
+          <div className="pt-2">
+            <p className="text-sm font-medium text-slate-700 mb-2">Preview:</p>
+            <div className={`rounded-md p-3 text-sm font-medium text-white ${
+              announcementType === "info" ? "bg-blue-600" :
+              announcementType === "warning" ? "bg-amber-500" :
+              announcementType === "error" ? "bg-red-600" :
+              "bg-emerald-600"
+            }`}>
+              <div dangerouslySetInnerHTML={{ __html: announcementMsg || "<em>No message</em>" }} />
+            </div>
+          </div>
+
+          <button
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+            onClick={handlePublishAnnouncement}
+            disabled={!announcementMsg.trim()}
+          >
+            Publish Announcement
+          </button>
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Access Control">
+        <div className="space-y-4 mt-4">
+          <div className="flex items-center justify-between p-4 border border-slate-200 rounded-md bg-slate-50">
+            <div>
+              <p className="font-medium text-slate-900">Whitelist Mode</p>
+              <p className="text-sm text-slate-500">If enabled, only whitelisted users can interact with the platform.</p>
+            </div>
+            <button
+              onClick={handleToggleWhitelistMode}
+              disabled={accessUpdating}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                isWhitelistMode ? "bg-slate-900" : "bg-slate-300"
+              }`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                isWhitelistMode ? "translate-x-6" : "translate-x-1"
+              }`} />
+            </button>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700">Target Address</label>
+            <input
+              type="text"
+              className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+              value={accessTarget}
+              onChange={(e) => setAccessTarget(e.target.value)}
+              placeholder="G..."
+            />
+          </div>
+          
+          <div className="flex flex-wrap gap-2 pt-2">
+            <button
+              className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              onClick={() => handleAccessAction("addBlacklist")}
+              disabled={!accessTarget || accessUpdating}
+            >
+              Blacklist
+            </button>
+            <button
+              className="rounded-md border border-red-600 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+              onClick={() => handleAccessAction("removeBlacklist")}
+              disabled={!accessTarget || accessUpdating}
+            >
+              Un-Blacklist
+            </button>
+            <div className="w-px bg-slate-200 mx-2" />
+            <button
+              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+              onClick={() => handleAccessAction("addWhitelist")}
+              disabled={!accessTarget || accessUpdating}
+            >
+              Whitelist
+            </button>
+            <button
+              className="rounded-md border border-slate-900 px-4 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50 disabled:opacity-50"
+              onClick={() => handleAccessAction("removeWhitelist")}
+              disabled={!accessTarget || accessUpdating}
+            >
+              Un-Whitelist
+            </button>
+          </div>
+        </div>
+      </SectionCard>
+      {showWithdrawConfirm && (
+        <ConfirmDialog
+          open={true}
+          title="Withdraw all platform fees?"
+          description="This will transfer all accrued platform fees to your admin wallet. The fee balance will be reset to zero."
+          consequences={[
+            "All accrued fees will be swept to the admin wallet immediately.",
+            "The on-chain fee balance will be reset to 0.",
+            "This action cannot be reversed.",
+          ]}
+          impactLine={`${toXlm(fees)} XLM will be transferred to your wallet`}
+          confirmLabel="Yes, withdraw fees"
+          variant="primary"
+          loading={withdrawing}
+          suppressKey={CONFIRM_KEYS.withdrawFees}
+          onConfirm={() => void handleWithdraw()}
+          onCancel={() => setShowWithdrawConfirm(false)}
+        />
+      )}
 
       {withdrawals.length > 0 && (
         <SectionCard title="Withdrawal History">

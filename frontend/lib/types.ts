@@ -16,6 +16,15 @@ export interface Job {
   deadline: string;
   token: string;
   revision_count: number;
+  submitted_at: string;
+}
+
+/** A single milestone within a milestone-based job. */
+export interface Milestone {
+  id: number;
+  description_hash: string;
+  amount: string; // stroops as string
+  is_released: boolean;
 }
 
 export type NotificationEvent =

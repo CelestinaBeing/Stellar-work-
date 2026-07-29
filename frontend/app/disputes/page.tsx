@@ -4,10 +4,12 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useModalFocusTrap } from "@/lib/modal";
 import { useWallet } from "@/lib/wallet-context";
 import { useToast } from "@/components/ToastProvider";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import EmptyState from "@/components/EmptyState";
 import NoResultsState from "@/components/NoResultsState";
 import SectionCard from "@/components/SectionCard";
 import { toXlm } from "@/lib/format";
+import { isConfirmSuppressed, CONFIRM_KEYS } from "@/lib/confirm-prefs";
 import { raiseDispute as contractRaiseDispute, resolveDispute as contractResolveDispute } from "@/lib/contract";
 import {
   loadDisputesPageData,
@@ -475,6 +477,8 @@ export default function DisputesPage() {
 
   const [showRaiseModal, setShowRaiseModal] = useState(false);
   const [resolveTarget, setResolveTarget] = useState<Dispute | null>(null);
+  const [showRaiseConfirm, setShowRaiseConfirm] = useState(false);
+  const [pendingDisputeJobId, setPendingDisputeJobId] = useState<string | null>(null);
   const { showSuccess, showError } = useToast();
 
   // Sync role with wallet/admin status
@@ -525,8 +529,9 @@ export default function DisputesPage() {
   });
 
   async function handleRaiseDispute(jobId: string, reason: string, evidence: string) {
+    if (!wallet) return;
     try {
-      await contractRaiseDispute(jobId);
+      await contractRaiseDispute(wallet, jobId);
       const job = eligibleJobs.find(j => j.id === jobId)!;
       const newDispute: Dispute = {
         id: `D-${String(disputes.length + 1).padStart(3, "0")}`,
@@ -628,9 +633,16 @@ export default function DisputesPage() {
 
             {role !== "admin" && (
               <button
-                onClick={() => setShowRaiseModal(true)}
+                onClick={() => {
+                  if (isConfirmSuppressed(CONFIRM_KEYS.raiseDispute)) {
+                    setShowRaiseModal(true);
+                  } else {
+                    setShowRaiseConfirm(true);
+                  }
+                }}
                 disabled={eligibleJobs.length === 0}
                 className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60 transition-colors"
+                aria-haspopup="dialog"
               >
                 + Raise Dispute
               </button>
@@ -710,6 +722,26 @@ export default function DisputesPage() {
       </div>
 
       {/* Modals */}
+      {showRaiseConfirm && (
+        <ConfirmDialog
+          open={true}
+          title="Raise a dispute?"
+          description="Raising a dispute will freeze the escrowed funds until an admin resolves the case. Both parties will be notified."
+          consequences={[
+            "Funds remain locked in escrow — neither party can withdraw.",
+            "The job moves to Disputed status.",
+            "An admin must resolve the dispute before funds are released.",
+          ]}
+          confirmLabel="Yes, raise dispute"
+          variant="warning"
+          suppressKey={CONFIRM_KEYS.raiseDispute}
+          onConfirm={() => {
+            setShowRaiseConfirm(false);
+            setShowRaiseModal(true);
+          }}
+          onCancel={() => setShowRaiseConfirm(false)}
+        />
+      )}
       {showRaiseModal && (
         <RaiseDisputeModal
           jobs={eligibleJobs}

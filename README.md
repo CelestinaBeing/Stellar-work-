@@ -1,5 +1,12 @@
 # StellarWork
 
+[![Production Deployment](https://img.shields.io/github/actions/workflow/status/your-org/Stellar-work-/deploy-production.yml?branch=main&label=production&logo=vercel)](https://github.com/your-org/Stellar-work-/actions/workflows/deploy-production.yml)
+[![Preview Deployments](https://img.shields.io/github/actions/workflow/status/your-org/Stellar-work-/deploy-preview.yml?label=preview&logo=vercel)](https://github.com/your-org/Stellar-work-/actions/workflows/deploy-preview.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/your-org/Stellar-work-/ci.yml?label=ci&logo=github)](https://github.com/your-org/Stellar-work-/actions/workflows/ci.yml)
+[![Frontend CI](https://img.shields.io/github/actions/workflow/status/your-org/Stellar-work-/frontend.yml?label=frontend+ci&logo=github)](https://github.com/your-org/Stellar-work-/actions/workflows/frontend.yml)
+[![Contract CI](https://img.shields.io/github/actions/workflow/status/your-org/Stellar-work-/contract.yml?label=contract+ci&logo=rust)](https://github.com/your-org/Stellar-work-/actions/workflows/contract.yml)
+[![Code Coverage](https://img.shields.io/codecov/c/github/your-org/Stellar-work-?logo=codecov)](https://codecov.io/gh/your-org/Stellar-work-)
+
 StellarWork is an open-source decentralized freelance marketplace on Stellar. Payments are held in Soroban escrow and released by state transitions, not platform custody logic.
 
 ## Repository Layout
@@ -190,16 +197,88 @@ soroban contract invoke \
 - Core escrow lifecycle (`post_job`, `accept_job`, `submit_work`, `approve_work`, `cancel_job`)
 - Freelancer-initiated job cancellation with penalty (`freelancer_cancel_job`)
 - On-chain job storage and count queries
+- Multi-token support with admin-managed whitelist (`add_allowed_token`, `remove_allowed_token`)
 - IPFS-based job description storage via web3.storage (with localStorage fallback)
 - Platform fee accounting (2.5%)
+- Dispute resolution with flexible client/freelancer splits
+- Contract upgrade mechanism with 24-hour timelock
 - Contract unit tests for core paths
 - Core pages: `/`, `/post-job`, `/job/[id]`, `/dashboard`, `/admin`, `/disputes`, `/profile/[address]`
 
+## Environment Configuration
+
+Copy `frontend/.env.example` to `frontend/.env.local` and set the required variables:
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NEXT_PUBLIC_CONTRACT_ID` | Yes | — | Deployed escrow contract ID |
+| `NEXT_PUBLIC_NETWORK` | No | `testnet` | `testnet` or `mainnet` |
+| `NEXT_PUBLIC_SOROBAN_RPC` | No | `https://soroban-testnet.stellar.org` | Soroban RPC endpoint |
+| `NEXT_PUBLIC_NATIVE_TOKEN` | No | — | Default token address for post-job form |
+| `NEXT_PUBLIC_ADMIN_ADDRESS` | No | — | Admin wallet for UI access control |
+| `NEXT_PUBLIC_IPFS_GATEWAY_URL` | No | `https://dweb.link/ipfs/` | IPFS gateway for descriptions |
+| `NEXT_PUBLIC_WEB3_STORAGE_TOKEN` | No | — | Web3.storage token for IPFS uploads |
+
+The frontend validates configuration at runtime via `lib/config.ts`. Missing required variables produce clear error messages. See `docs/environments.md` for the full reference including Testnet/Mainnet notes.
+
+## Vercel Deployment
+
+The frontend is deployed to Vercel automatically:
+
+- **Production** — every push to `main` that changes `frontend/**` triggers a production deployment.
+- **Preview** — every pull request gets a unique preview URL, posted as a comment by the GitHub Actions bot.
+
+See [docs/DEPLOY.md](docs/DEPLOY.md) for the full setup guide (creating the Vercel project, required GitHub secrets, environment variable configuration, and troubleshooting).
+
 For a command-only deployment reference, see `docs/testnet-deployment-guide.md`.
 For environment configuration, see `docs/environments.md`.
+For API reference, see `docs/CONTRACT.md`.
+For frontend architecture, see `docs/FRONTEND_ARCHITECTURE.md`.
+For third-party integration, see `docs/INTEGRATION.md`.
 
 For the full documentation index, see [docs/README.md](docs/README.md).
 
+## Translation Status
+
+StellarWork supports multiple languages. Community contributions to add or maintain translations are welcome — see [docs/TRANSLATING.md](docs/TRANSLATING.md) for a step-by-step guide.
+
+| Locale | Language | Status | Maintainer |
+|--------|----------|--------|------------|
+| `en` | English | ✅ Complete (reference) | Core team |
+| `es` | Spanish | ✅ Complete | Community |
+
+To add a new language, follow the [translation guide](docs/TRANSLATING.md).
+
+## Production Operations
+
+For deploying and operating StellarWork in production, start with these three documents:
+
+| Document | Purpose |
+|----------|---------|
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Step-by-step production deployment: contract build/deploy/initialize, Vercel frontend, DNS/SSL, post-deploy verification |
+| [docs/OPS_RUNBOOK.md](docs/OPS_RUNBOOK.md) | Ongoing operations: monitoring signals, backup procedures, incident response, contract upgrades, regular maintenance |
+| [docs/PRODUCTION_CHECKLIST.md](docs/PRODUCTION_CHECKLIST.md) | Pre-launch checklist with sign-off table — complete before going live |
+
+## Video Tutorials
+
+Step-by-step video walkthroughs for the most common workflows. Videos are recorded on Stellar testnet — no real funds are used.
+
+| # | Title | Audience | Status |
+|---|-------|----------|--------|
+| 01 | Getting Started: Connecting Your Wallet | All | Planned |
+| 02 | Posting Your First Job | Clients | Planned |
+| 03 | Finding and Accepting Jobs as a Freelancer | Freelancers | Planned |
+| 04 | Completing a Job and Getting Paid | Freelancers | Planned |
+| 05 | Managing Disputes | All | Planned |
+
+> When videos are published, replace "Planned" with a link to the video (e.g., `[Watch →](https://youtube.com/...)`).
+
+For recording setup, script templates, format guidelines, and closed captioning standards, see [docs/VIDEO_TUTORIALS.md](docs/VIDEO_TUTORIALS.md).
+
+## Code of Conduct
+
+This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
+All contributors are expected to uphold our community standards.
 
 ## License
 

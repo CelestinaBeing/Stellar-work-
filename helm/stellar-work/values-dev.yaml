@@ -1,0 +1,29 @@
+# Development overrides — single replica, no TLS, relaxed resources.
+replicaCount: 1
+
+ingress:
+  enabled: true
+  hosts:
+    - host: stellar-work.dev.local
+      paths:
+        - path: /
+          pathType: Prefix
+
+resources:
+  limits:
+    cpu: 250m
+    memory: 256Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+autoscaling:
+  enabled: false
+
+podDisruptionBudget:
+  enabled: false
+
+env:
+  NEXT_PUBLIC_STELLAR_NETWORK: testnet
+  NEXT_PUBLIC_HORIZON_URL: "https://horizon-testnet.stellar.org"
+  NEXT_PUBLIC_SOROBAN_RPC_URL: "https://soroban-testnet.stellar.org"

@@ -24,6 +24,124 @@ export function toXlm(stroops: string | number | bigint): string {
     .padStart(2, "0")}`;
 }
 
+export const FIAT_CURRENCIES = ["USD", "EUR", "GBP", "INR", "JPY"] as const;
+
+export type FiatCurrency = (typeof FIAT_CURRENCIES)[number];
+export type XlmFiatRates = Partial<Record<FiatCurrency, number>>;
+
+export interface XlmFiatRateCache {
+  rates: XlmFiatRates;
+  fetchedAt: number;
+}
+
+const FIAT_RATE_CACHE_KEY = "stellarwork:xlm-fiat-rates";
+const FIAT_CURRENCY_KEY = "stellarwork:preferred-fiat-currency";
+const FIAT_RATE_TTL_MS = 5 * 60 * 1000;
+
+export function isFiatCurrency(value: string): value is FiatCurrency {
+  return FIAT_CURRENCIES.includes(value as FiatCurrency);
+}
+
+export function getPreferredFiatCurrency(): FiatCurrency {
+  if (typeof window === "undefined") return "USD";
+  const stored = window.localStorage.getItem(FIAT_CURRENCY_KEY);
+  return stored && isFiatCurrency(stored) ? stored : "USD";
+}
+
+export function savePreferredFiatCurrency(currency: FiatCurrency): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(FIAT_CURRENCY_KEY, currency);
+}
+
+export function getCachedXlmFiatRates(now = Date.now()): XlmFiatRateCache | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(FIAT_RATE_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as XlmFiatRateCache;
+    if (!parsed || typeof parsed.fetchedAt !== "number" || !parsed.rates) return null;
+    if (now - parsed.fetchedAt > FIAT_RATE_TTL_MS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchXlmFiatRates(
+  fetcher: typeof fetch = fetch,
+  now = Date.now(),
+): Promise<XlmFiatRateCache> {
+  const cached = getCachedXlmFiatRates(now);
+  if (cached) return cached;
+
+  const response = await fetcher(
+    "https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=usd,eur,gbp,inr,jpy",
+  );
+  if (!response.ok) {
+    throw new Error("Unable to fetch XLM fiat exchange rates.");
+  }
+
+  const data = (await response.json()) as {
+    stellar?: Partial<Record<Lowercase<FiatCurrency>, number>>;
+  };
+  const rates = FIAT_CURRENCIES.reduce<XlmFiatRates>((next, currency) => {
+    const rate = data.stellar?.[currency.toLowerCase() as Lowercase<FiatCurrency>];
+    if (typeof rate === "number" && Number.isFinite(rate)) {
+      next[currency] = rate;
+    }
+    return next;
+  }, {});
+
+  if (Object.keys(rates).length === 0) {
+    throw new Error("XLM fiat exchange rates were unavailable.");
+  }
+
+  const cache = { rates, fetchedAt: now };
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(FIAT_RATE_CACHE_KEY, JSON.stringify(cache));
+  }
+  return cache;
+}
+
+export function formatFiatAmount(amount: number, currency: FiatCurrency): string {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency,
+    maximumFractionDigits: currency === "JPY" ? 0 : 2,
+  }).format(amount);
+}
+
+export function formatXlmWithFiat(
+  stroops: string | number | bigint,
+  currency: FiatCurrency,
+  rates?: XlmFiatRates | null,
+): string {
+  const xlm = toXlm(stroops);
+  const rate = rates?.[currency];
+  if (typeof rate !== "number" || !Number.isFinite(rate)) {
+    return `${xlm} XLM`;
+  }
+
+  const xlmAmount = Number(typeof stroops === "bigint" ? stroops : BigInt(stroops)) / 10_000_000;
+  if (!Number.isFinite(xlmAmount)) {
+    return `${xlm} XLM`;
+  }
+
+  return `${xlm} XLM (~${formatFiatAmount(xlmAmount * rate, currency)} ${currency})`;
+}
+
+export function formatXlmFiatRateTooltip(
+  currency: FiatCurrency,
+  rates?: XlmFiatRates | null,
+  fetchedAt?: number,
+): string {
+  const rate = rates?.[currency];
+  if (typeof rate !== "number" || !Number.isFinite(rate)) {
+    return "Fiat conversion unavailable; showing XLM only.";
+  }
+  const timestamp = fetchedAt ? ` Updated ${new Date(fetchedAt).toLocaleString()}.` : "";
+  return `1 XLM = ${formatFiatAmount(rate, currency)} ${currency}.${timestamp}`;
+}
 function formatRelativeInterval(deltaMs: number): string {
   const absSeconds = Math.max(1, Math.round(Math.abs(deltaMs) / 1000));
   const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [

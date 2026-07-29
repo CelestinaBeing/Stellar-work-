@@ -1,0 +1,155 @@
+{
+  "common": {
+    "siteName": "StellarWork",
+    "siteTagline": "Mercado Escrow Descentralizado",
+    "builtOn": "Construido en",
+    "stellar": "Stellar",
+    "skipToContent": "Saltar al contenido principal",
+    "allRightsReserved": "StellarWork. Todos los derechos reservados.",
+    "loading": "Cargando...",
+    "error": "Algo salió mal",
+    "retry": "Intentar de nuevo",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "confirm": "Confirmar",
+    "search": "Buscar",
+    "noResults": "Sin resultados",
+    "export": "Exportar",
+    "exportCSV": "Exportar CSV",
+    "exportJSON": "Exportar JSON"
+  },
+  "nav": {
+    "jobs": "Trabajos",
+    "postJob": "Publicar Trabajo",
+    "dashboard": "Panel",
+    "transactions": "Transacciones",
+    "disputes": "Disputas",
+    "messages": "Mensajes",
+    "admin": "Admin",
+    "profile": "Perfil",
+    "toggleMenu": "Alternar menú de navegación",
+    "cmdK": "⌘K"
+  },
+  "home": {
+    "title": "Trabajos Abiertos",
+    "noJobs": "Aún no hay trabajos abiertos. ¡Sé el primero en publicar uno!",
+    "loadMore": "Cargar más trabajos",
+    "searchPlaceholder": "Buscar trabajos..."
+  },
+  "job": {
+    "postTitle": "Publicar Trabajo",
+    "postDescription": "Crear una nueva oferta de trabajo en la red Stellar",
+    "title": "Título del Trabajo",
+    "titlePlaceholder": "Ingrese el título del trabajo",
+    "description": "Descripción",
+    "amount": "Cantidad (XLM)",
+    "amountPlaceholder": "0.00",
+    "deadline": "Fecha límite",
+    "token": "Token",
+    "submit": "Publicar Trabajo",
+    "postSuccess": "Trabajo publicado exitosamente",
+    "postError": "Error al publicar el trabajo",
+    "accept": "Aceptar Trabajo",
+    "submitWork": "Enviar Trabajo",
+    "approveWork": "Aprobar Trabajo",
+    "rejectWork": "Rechazar Trabajo",
+    "cancelJob": "Cancelar Trabajo",
+    "raiseDispute": "Abrir Disputa",
+    "viewDetails": "Ver Detalles",
+    "status": "Estado",
+    "client": "Cliente",
+    "freelancer": "Freelancer",
+    "createdAt": "Creado",
+    "notFound": "Trabajo no encontrado",
+    "open": "Abierto",
+    "inProgress": "En Progreso",
+    "submittedForReview": "Enviado para Revisión",
+    "completed": "Completado",
+    "cancelled": "Cancelado",
+    "disputed": "Disputado"
+  },
+  "dashboard": {
+    "title": "Panel",
+    "postedJobs": "Trabajos Publicados",
+    "acceptedJobs": "Trabajos Aceptados",
+    "noPostedJobs": "Aún no has publicado ningún trabajo",
+    "noAcceptedJobs": "Aún no has aceptado ningún trabajo",
+    "connectWallet": "Conecta tu billetera para ver tu panel"
+  },
+  "wallet": {
+    "connect": "Conectar Billetera",
+    "disconnect": "Desconectar",
+    "copyAddress": "Copiar Dirección",
+    "copied": "Copiado",
+    "switchAccount": "Cambiar Cuenta",
+    "connecting": "Conectando...",
+    "notInstalled": "Billetera Freighter no detectada",
+    "installFreighter": "Instalar Freighter"
+  },
+  "transactions": {
+    "title": "Transacciones",
+    "noTransactions": "No se encontraron transacciones"
+  },
+  "disputes": {
+    "title": "Disputas",
+    "noDisputes": "No se encontraron disputas",
+    "all": "Todas",
+    "active": "Activas",
+    "resolved": "Resueltas"
+  },
+  "messages": {
+    "title": "Mensajes",
+    "noMessages": "Aún no hay mensajes",
+    "unread": "mensajes no leídos",
+    "typeMessage": "Escribe un mensaje..."
+  },
+  "admin": {
+    "title": "Panel de Administración",
+    "fees": "Comisiones",
+    "withdrawFees": "Retirar Comisiones",
+    "manageTokens": "Gestionar Tokens",
+    "noAccess": "Acceso de administrador requerido"
+  },
+  "profile": {
+    "title": "Perfil",
+    "address": "Dirección",
+    "notFound": "Perfil no encontrado"
+  },
+  "footer": {
+    "github": "GitHub",
+    "documentation": "Documentación",
+    "license": "Licencia"
+  },
+  "theme": {
+    "light": "Modo claro",
+    "dark": "Modo oscuro",
+    "system": "Preferencia del sistema"
+  },
+  "language": {
+    "switchTo": "Cambiar a {locale}",
+    "en": "English",
+    "es": "Español"
+  },
+  "error": {
+    "generic": "Algo salió mal",
+    "notFound": "Página no encontrada",
+    "unauthorized": "No autorizado"
+  },
+  "settings": {
+    "typography": {
+      "sectionTitle": "Tipografía",
+      "sectionDescription": "Ajusta el tamaño del texto y el espaciado para mejorar la legibilidad.",
+      "fontSize": "Tamaño de fuente",
+      "fontSizeSmall": "Pequeño (14px)",
+      "fontSizeMedium": "Mediano (16px) — predeterminado",
+      "fontSizeLarge": "Grande (18px)",
+      "fontSizeXLarge": "Extra grande (20px)",
+      "lineSpacing": "Espaciado de línea",
+      "lineSpacingCompact": "Compacto (1.4×)",
+      "lineSpacingNormal": "Normal (1.6×) — predeterminado",
+      "lineSpacingRelaxed": "Relajado (1.8×)",
+      "resetDefaults": "Restablecer valores predeterminados",
+      "previewLabel": "Vista previa de tipografía"
+    }
+  }
+}

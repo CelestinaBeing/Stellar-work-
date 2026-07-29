@@ -161,7 +161,7 @@ describe("Job detail wallet connect CTA copy", () => {
   it("does not show the hint while the job is still loading", () => {
     mockUseWallet.mockReturnValue({ wallet: null, connectWallet: vi.fn() });
     // Never-resolving promise keeps the component in the fetching state
-    mockGetJob.mockReturnValue(new Promise(() => {}));
+    mockGetJob.mockReturnValue(new Promise(() => { void 0; }));
     renderJobPage();
 
     expect(

@@ -47,6 +47,15 @@ export default function CommandPalette() {
         keywords: ["disputes", "conflict"],
         run: () => router.push("/disputes"),
       },
+      {
+        id: "shortcuts",
+        label: "Show Shortcuts",
+        keywords: ["help", "keyboard", "shortcuts"],
+        run: () => {
+          const event = new KeyboardEvent("keydown", { key: "?" });
+          window.dispatchEvent(event);
+        },
+      },
     ];
 
     if (!wallet) {
@@ -85,8 +94,9 @@ export default function CommandPalette() {
   const close = useCallback(() => {
     setOpen(false);
     setQuery("");
-    setSelectedIndex(0);
   }, []);
+
+
 
   const executeCommand = useCallback(
     (command: CommandItem) => {
@@ -145,10 +155,6 @@ export default function CommandPalette() {
     }
   }, [open]);
 
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [query]);
-
   if (!open) {
     return null;
   }
@@ -168,7 +174,10 @@ export default function CommandPalette() {
             ref={inputRef}
             type="search"
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setSelectedIndex(0);
+            }}
             placeholder="Search commands..."
             aria-label="Search commands"
             className="w-full border-0 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
@@ -198,6 +207,17 @@ export default function CommandPalette() {
             ))
           )}
         </ul>
+        <div className="flex items-center gap-4 border-t border-slate-100 px-4 py-2 text-[10px] text-slate-400">
+          <span>
+            <kbd className="rounded border border-slate-200 bg-slate-50 px-1 py-0.5 font-medium">↑↓</kbd> navigate
+          </span>
+          <span>
+            <kbd className="rounded border border-slate-200 bg-slate-50 px-1 py-0.5 font-medium">↵</kbd> select
+          </span>
+          <span>
+            <kbd className="rounded border border-slate-200 bg-slate-50 px-1 py-0.5 font-medium">esc</kbd> close
+          </span>
+        </div>
       </div>
     </div>
   );

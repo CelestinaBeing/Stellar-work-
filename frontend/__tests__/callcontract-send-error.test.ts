@@ -18,7 +18,7 @@ vi.mock("@stellar/stellar-sdk", () => {
   class _Account {
     constructor(public id: string, public sequence: string) {}
     accountId() { return this.id; }
-    incrementSequenceNumber() {}
+    incrementSequenceNumber() { void 0; }
     sequenceNumber() { return this.sequence; }
   }
   class _Contract {
@@ -80,7 +80,7 @@ describe("callContract sendTransaction error path", () => {
     getAccount.mockResolvedValue({
       id: "GWALLET",
       accountId: () => "GWALLET",
-      incrementSequenceNumber: () => {},
+      incrementSequenceNumber: () => { void 0; },
       sequenceNumber: () => "0",
     });
     // Simulation succeeds so we reach the send step
