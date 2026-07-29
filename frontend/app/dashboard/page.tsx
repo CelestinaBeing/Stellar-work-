@@ -2,6 +2,7 @@
 
 import {
   approveWork,
+  batchApproveJobs,
   cancelJob,
   freelancerCancelJob,
   getJob,
@@ -62,6 +63,8 @@ export default function DashboardPage() {
   const [actionLoading, setActionLoading] = useState<number | null>(null);
   const [pendingCancelJobId, setPendingCancelJobId] = useState<number | null>(null);
   const [completedJobsCount, setCompletedJobsCount] = useState<number | null>(null);
+  const [selectedJobs, setSelectedJobs] = useState<Set<number>>(new Set());
+  const [batchLoading, setBatchLoading] = useState(false);
   const filterOptions: Array<JobStatus | "All"> = ["All", ...STATUS_OPTIONS];
   const filterButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
@@ -124,6 +127,25 @@ export default function DashboardPage() {
       showError(message);
     } finally {
       setActionLoading(null);
+    }
+  };
+
+  const handleBatchApprove = async () => {
+    if (!wallet || selectedJobs.size === 0) return;
+    setBatchLoading(true);
+    setError(null);
+    try {
+      const jobIds = Array.from(selectedJobs).map(String);
+      await batchApproveJobs(wallet, jobIds);
+      showSuccess(`${jobIds.length} job(s) approved.`);
+      setSelectedJobs(new Set());
+      await fetchJobs();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Batch approval failed.";
+      setError(message);
+      showError(message);
+    } finally {
+      setBatchLoading(false);
     }
   };
 
@@ -292,6 +314,17 @@ export default function DashboardPage() {
             onAction={handleAction}
             onRequestCancel={setPendingCancelJobId}
             onClearFilter={() => setStatusFilter("All")}
+            selectedJobs={selectedJobs}
+            onToggleSelect={(id) => {
+              setSelectedJobs((prev) => {
+                const next = new Set(prev);
+                if (next.has(id)) next.delete(id);
+                else next.add(id);
+                return next;
+              });
+            }}
+            onBatchApprove={handleBatchApprove}
+            batchLoading={batchLoading}
           />
           <JobSection
             title="Accepted Jobs"
@@ -335,6 +368,10 @@ function JobSection({
   onAction,
   onRequestCancel,
   onClearFilter,
+  selectedJobs,
+  onToggleSelect,
+  onBatchApprove,
+  batchLoading,
 }: {
   title: string;
   subtitle: string;
@@ -347,11 +384,39 @@ function JobSection({
   onAction: (fn: () => Promise<unknown>, jobId: number, notification?: { event: NotificationEvent; message: string }) => Promise<void>;
   onRequestCancel: (jobId: number) => void;
   onClearFilter: () => void;
+  selectedJobs?: Set<number>;
+  onToggleSelect?: (id: number) => void;
+  onBatchApprove?: () => void;
+  batchLoading?: boolean;
 }) {
+  const pendingReviewIds = allJobs
+    .filter((j) => j.job.status === "SubmittedForReview")
+    .map((j) => j.id);
+  const hasPendingReview = pendingReviewIds.length > 0;
+
   return (
     <div>
-      <h2 className="text-lg font-semibold">{title}</h2>
-      <p className="mb-3 text-sm text-slate-500">{subtitle}</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">{title}</h2>
+          <p className="mb-3 text-sm text-slate-500">{subtitle}</p>
+        </div>
+        {role === "client" && hasPendingReview && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-400">
+              {selectedJobs?.size ?? 0} of {pendingReviewIds.length} selected
+            </span>
+            <button
+              type="button"
+              onClick={onBatchApprove}
+              disabled={!selectedJobs || selectedJobs.size === 0 || batchLoading}
+              className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {batchLoading ? "Approving..." : `Approve Selected (${selectedJobs?.size ?? 0})`}
+            </button>
+          </div>
+        )}
+      </div>
       {jobs.length === 0 ? (
         filterActive && allJobs.length > 0 ? (
           <NoResultsState
@@ -367,21 +432,23 @@ function JobSection({
           />
         )
       ) : (
-        <ul className="grid list-none gap-4 sm:grid-cols-2" aria-label={title}>
-          {jobs.map(({ id, job }) => (
-            <li key={id}>
-              <JobCard
-                id={id}
-                job={job}
-                wallet={wallet}
-                role={role}
-                isLoading={actionLoading === id}
-                onAction={onAction}
-                onRequestCancel={onRequestCancel}
-              />
-            </li>
-          ))}
-        </ul>
+          <ul className="grid list-none gap-4 sm:grid-cols-2" aria-label={title}>
+            {jobs.map(({ id, job }) => (
+              <li key={id}>
+                <JobCard
+                  id={id}
+                  job={job}
+                  wallet={wallet}
+                  role={role}
+                  isLoading={actionLoading === id}
+                  onAction={onAction}
+                  onRequestCancel={onRequestCancel}
+                  isSelected={selectedJobs?.has(id) ?? false}
+                  onToggleSelect={role === "client" ? onToggleSelect : undefined}
+                />
+              </li>
+            ))}
+          </ul>
       )}
     </div>
   );
@@ -395,6 +462,8 @@ function JobCard({
   isLoading,
   onAction,
   onRequestCancel,
+  isSelected,
+  onToggleSelect,
 }: {
   id: number;
   job: Job;
@@ -403,13 +472,26 @@ function JobCard({
   isLoading: boolean;
   onAction: (fn: () => Promise<unknown>, jobId: number, notification?: { event: NotificationEvent; message: string }) => Promise<void>;
   onRequestCancel: (jobId: number) => void;
+  isSelected?: boolean;
+  onToggleSelect?: (id: number) => void;
 }) {
   const actions = getActions(id, job, wallet, role);
 
   return (
-    <article className="interactive-card h-full p-4">
+    <article className={`interactive-card h-full p-4 ${isSelected ? "ring-2 ring-emerald-400" : ""}`}>
       <div className="flex items-start justify-between gap-2">
-        <h3 className="font-medium">Job #{id}</h3>
+        <div className="flex items-center gap-2">
+          {onToggleSelect && job.status === "SubmittedForReview" && (
+            <input
+              type="checkbox"
+              checked={isSelected ?? false}
+              onChange={() => onToggleSelect(id)}
+              className="h-4 w-4 rounded border-slate-300 text-emerald-600"
+              aria-label={`Select Job #${id} for batch approval`}
+            />
+          )}
+          <h3 className="font-medium">Job #{id}</h3>
+        </div>
         <StatusPill status={job.status} />
       </div>
       <div className="mt-2 space-y-1 text-sm text-slate-600">

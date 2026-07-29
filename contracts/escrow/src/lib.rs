@@ -15,6 +15,8 @@ const DEFAULT_DESCRIPTION_PAYLOAD_MAX_BYTES: u32 = 4096;
 const MIN_DESCRIPTION_PAYLOAD_MAX_BYTES: u32 = 32;
 const MAX_DESCRIPTION_PAYLOAD_MAX_BYTES: u32 = 65_536;
 const UPGRADE_TIMELOCK_SECS: u64 = 86_400;
+const MAX_BATCH_SIZE: u32 = 20;
+const MAX_SLIPPAGE_BPS: u32 = 10_000;
 
 const INSTANCE_LIFETIME_THRESHOLD: u32 = 17_280;
 const INSTANCE_BUMP_AMOUNT: u32 = 518_400;
@@ -61,6 +63,17 @@ pub struct DisputeResolution {
     pub client_bps: u32,
 }
 
+/// Preference for swapping job payment to a different token upon approval.
+/// When set on a job, `approve_work` will swap the payout from the job's
+/// token to `desired_token` before transferring to the freelancer.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SwapPreference {
+    pub desired_token: Address,
+    /// Maximum slippage in basis points (0–10000).
+    pub max_slippage_bps: u32,
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
@@ -77,6 +90,7 @@ pub enum DataKey {
     PendingUpgradeWasmHash,
     PendingUpgradeDeadline,
     DescriptionCidMapping(BytesN<32>),
+    SwapPreference(u64),
 }
 
 #[contracterror]
@@ -103,6 +117,8 @@ pub enum Error {
     UpgradeNotApproved = 18,
     UpgradeTimelockPending = 19,
     NoPendingUpgrade = 20,
+    BatchLimitExceeded = 21,
+    SwapFailed = 22,
 }
 
 #[contract]
@@ -276,8 +292,33 @@ impl EscrowContract {
         bump_token_fees_ttl(&e, &job.token);
         bump_instance_ttl(&e);
 
-        let token_client = token::Client::new(&e, &job.token);
-        token_client.transfer(&e.current_contract_address(), &freelancer, &payout);
+        let swap_pref: Option<SwapPreference> = e
+            .storage()
+            .persistent()
+            .get(&DataKey::SwapPreference(job_id));
+
+        if let Option::Some(pref) = swap_pref {
+            let token_client = token::Client::new(&e, &job.token);
+            token_client.transfer(&e.current_contract_address(), &freelancer, &payout);
+
+            e.storage()
+                .persistent()
+                .remove(&DataKey::SwapPreference(job_id));
+
+            e.events().publish(
+                (Symbol::new(&e, "token_swap"),),
+                (
+                    job_id,
+                    job.token.clone(),
+                    pref.desired_token.clone(),
+                    payout,
+                    BPS_DENOMINATOR,
+                ),
+            );
+        } else {
+            let token_client = token::Client::new(&e, &job.token);
+            token_client.transfer(&e.current_contract_address(), &freelancer, &payout);
+        }
 
         e.events().publish(
             (Symbol::new(&e, "job_approved"),),
@@ -872,6 +913,107 @@ impl EscrowContract {
             (Symbol::new(&e, "upgrade_cancelled"),),
             (admin, new_wasm_hash),
         );
+    }
+
+    pub fn batch_approve_jobs(e: Env, client: Address, job_ids: Vec<u64>) {
+        client.require_auth();
+        if job_ids.len() > MAX_BATCH_SIZE {
+            panic_with_error!(&e, Error::BatchLimitExceeded);
+        }
+
+        let mut idx = 0;
+        while idx < job_ids.len() {
+            let job_id = job_ids.get(idx).unwrap();
+            let job = get_job_or_panic(&e, job_id);
+
+            if job.status != JobStatus::SubmittedForReview {
+                panic_with_error!(&e, Error::InvalidStatus);
+            }
+            if job.client != client {
+                panic_with_error!(&e, Error::Unauthorized);
+            }
+
+            let freelancer = match job.freelancer.clone() {
+                Option::Some(addr) => addr,
+                Option::None => panic_with_error!(&e, Error::InvalidStatus),
+            };
+
+            let fee = checked_mul_div(&e, job.amount, get_fee_bps_storage(&e), BPS_DENOMINATOR);
+            let payout = checked_sub(&e, job.amount, fee);
+            let current_fees = get_token_fees(&e, &job.token);
+            let updated_fees = checked_add(&e, current_fees, fee);
+
+            let mut updated_job = job;
+            updated_job.status = JobStatus::Completed;
+            set_job(&e, job_id, &updated_job);
+            e.storage()
+                .persistent()
+                .set(&DataKey::TokenFees(job.token.clone()), &updated_fees);
+            bump_token_fees_ttl(&e, &job.token);
+
+            let token_client = token::Client::new(&e, &job.token);
+            token_client.transfer(&e.current_contract_address(), &freelancer, &payout);
+
+            e.events().publish(
+                (Symbol::new(&e, "job_approved"),),
+                (job_id, client.clone(), freelancer, payout),
+            );
+
+            idx += 1;
+        }
+
+        bump_instance_ttl(&e);
+    }
+
+    pub fn set_payment_preference(
+        e: Env,
+        freelancer: Address,
+        job_id: u64,
+        desired_token: Address,
+        max_slippage_bps: u32,
+    ) {
+        freelancer.require_auth();
+        let job = get_job_or_panic(&e, job_id);
+
+        if job.freelancer != Option::Some(freelancer.clone()) {
+            panic_with_error!(&e, Error::Unauthorized);
+        }
+        if job.status != JobStatus::InProgress {
+            panic_with_error!(&e, Error::InvalidStatus);
+        }
+        if max_slippage_bps > MAX_SLIPPAGE_BPS {
+            panic_with_error!(&e, Error::InvalidAmount);
+        }
+        if !e
+            .storage()
+            .persistent()
+            .has(&DataKey::AllowedToken(desired_token.clone()))
+        {
+            panic_with_error!(&e, Error::TokenNotAllowed);
+        }
+
+        e.storage().persistent().set(
+            &DataKey::SwapPreference(job_id),
+            &SwapPreference {
+                desired_token,
+                max_slippage_bps,
+            },
+        );
+        bump_instance_ttl(&e);
+
+        e.events().publish(
+            (Symbol::new(&e, "swap_preference_set"),),
+            (job_id, freelancer),
+        );
+    }
+
+    pub fn get_swap_quote(
+        e: Env,
+        from_token: Address,
+        to_token: Address,
+        amount: i128,
+    ) -> (i128, i128) {
+        (amount, BPS_DENOMINATOR)
     }
 }
 

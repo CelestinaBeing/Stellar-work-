@@ -63,6 +63,8 @@ export default function RootLayout({
                   <a href="https://github.com/anumukul/Stellar-work-" target="_blank" rel="noopener noreferrer" className="hover:text-blue-600 transition-colors">GitHub</a>
                   <Link href="/docs" className="hover:text-blue-600 transition-colors">Documentation</Link>
                   <a href="/LICENSE" target="_blank" rel="noopener noreferrer" className="hover:text-blue-600 transition-colors">License</a>
+                  <Link href="/legal/terms" className="hover:text-blue-600 transition-colors">Terms</Link>
+                  <Link href="/legal/privacy" className="hover:text-blue-600 transition-colors">Privacy</Link>
                 </nav>
 
                 <div className="flex items-center gap-2 rounded-full bg-slate-50 px-4 py-2 border border-slate-100">

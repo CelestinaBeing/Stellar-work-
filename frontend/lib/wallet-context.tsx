@@ -13,6 +13,7 @@ import {
   connectWallet as stellarConnectWallet,
   getPublicKey,
 } from "@/lib/stellar";
+import LegalConsentModal, { hasAcceptedLegal, acceptLegal } from "@/components/LegalConsentModal";
 
 interface WalletContextType {
   wallet: string | null;
@@ -32,6 +33,7 @@ const WalletContext = createContext<WalletContextType>({
 
 export function WalletProvider({ children }: { children: ReactNode }) {
   const [wallet, setWallet] = useState<string | null>(null);
+  const [showLegalModal, setShowLegalModal] = useState(false);
   const connectPromiseRef = useRef<Promise<string> | null>(null);
 
   useEffect(() => {
@@ -39,6 +41,12 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       if (key) setWallet(key);
     });
   }, []);
+
+  useEffect(() => {
+    if (wallet && !hasAcceptedLegal()) {
+      setShowLegalModal(true);
+    }
+  }, [wallet]);
 
   const connectWallet = useCallback(async () => {
     if (wallet) {
@@ -59,9 +67,20 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setWallet(null);
   }, []);
 
+  const declineLegal = useCallback(() => {
+    setShowLegalModal(false);
+    setWallet(null);
+  }, []);
+
   return (
     <WalletContext.Provider value={{ wallet, connectWallet, disconnectWallet }}>
       {children}
+      {showLegalModal && (
+        <LegalConsentModal
+          onAccept={() => setShowLegalModal(false)}
+          onClose={declineLegal}
+        />
+      )}
     </WalletContext.Provider>
   );
 }
