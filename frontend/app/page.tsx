@@ -868,6 +868,9 @@ export default function HomePage() {
         {visibleJobs.slice((page - 1) * pageSize, page * pageSize).map(({ id, job }) => {
           const deadline = formatDeadline(job.deadline);
 
+          // ✅ FIX: Check if the connected wallet is the job owner
+          const isOwnJob = wallet && wallet.address && job.client && wallet.address === job.client;
+
           return (
             <li key={id}>
               <article
@@ -890,6 +893,25 @@ export default function HomePage() {
                       />
                       Compare
                     </label>
+                    {isOwnJob && (
+                      <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                        <svg
+                          aria-hidden="true"
+                          viewBox="0 0 24 24"
+                          className="h-3 w-3"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                          <path d="M2 17l10 5 10-5" />
+                          <path d="M2 12l10 5 10-5" />
+                        </svg>
+                        Your Job
+                      </span>
+                    )}
                   </div>
                   <Link href={`/job/${id}`} className="block" onClick={() => markJobViewed(id)}>
                     <h2 className="flex items-center gap-2 text-lg font-medium hover:underline">
@@ -937,42 +959,49 @@ export default function HomePage() {
                   >
                     View Details
                   </Link>
-                  <button
-                    type="button"
-                    className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
-                      !wallet || actionLoading === id
-                        ? "cursor-not-allowed bg-slate-100 text-slate-400"
-                        : "bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800"
-                    }`}
-                    title={!wallet ? "Connect your wallet to accept jobs." : undefined}
-                    onClick={async () => {
-                      setError(null);
-                      if (!wallet) {
-                        return;
-                      }
-                      setActionLoading(id);
-                      try {
-                        const result = await acceptJob(wallet, String(id));
-                        if (result.hash) {
-                          setLatestTxHash(result.hash);
+                  {/* ✅ FIX: Only show "Accept Job" button if NOT the job owner */}
+                  {!isOwnJob ? (
+                    <button
+                      type="button"
+                      className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+                        !wallet || actionLoading === id
+                          ? "cursor-not-allowed bg-slate-100 text-slate-400"
+                          : "bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800"
+                      }`}
+                      title={!wallet ? "Connect your wallet to accept jobs." : undefined}
+                      onClick={async () => {
+                        setError(null);
+                        if (!wallet) {
+                          return;
                         }
-                        addNotification("job_accepted", id, `You accepted Job #${id}.`);
-                        await refresh();
-                      } catch (e) {
-                        setError(
-                          e instanceof Error
-                            ? e.message
-                            : "Failed to accept job. Check your balance or contract state.",
-                        );
-                      } finally {
-                        setActionLoading(null);
-                      }
-                    }}
-                    disabled={!wallet || actionLoading !== null}
-                    aria-busy={actionLoading === id}
-                  >
-                    {actionLoading === id ? "Processing..." : "Accept Job"}
-                  </button>
+                        setActionLoading(id);
+                        try {
+                          const result = await acceptJob(wallet, String(id));
+                          if (result.hash) {
+                            setLatestTxHash(result.hash);
+                          }
+                          addNotification("job_accepted", id, `You accepted Job #${id}.`);
+                          await refresh();
+                        } catch (e) {
+                          setError(
+                            e instanceof Error
+                              ? e.message
+                              : "Failed to accept job. Check your balance or contract state.",
+                          );
+                        } finally {
+                          setActionLoading(null);
+                        }
+                      }}
+                      disabled={!wallet || actionLoading !== null}
+                      aria-busy={actionLoading === id}
+                    >
+                      {actionLoading === id ? "Processing..." : "Accept Job"}
+                    </button>
+                  ) : (
+                    <span className="rounded-md px-4 py-2 text-sm font-medium text-slate-400 cursor-not-allowed">
+                      Own Job
+                    </span>
+                  )}
                   <button
                     type="button"
                     className={`rounded-md border px-4 py-2 text-sm font-medium transition-all duration-300 ${
