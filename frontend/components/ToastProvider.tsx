@@ -11,7 +11,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { CheckCircle2, XCircle } from "lucide-react";
 
 type ToastVariant = "success" | "error";
 
@@ -124,35 +123,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             <ToastItem key={toast.id} toast={toast} onDismiss={dismiss} />
           ))}
         </div>
-      <div
-        aria-live="polite"
-        aria-relevant="additions"
-        className="pointer-events-none fixed top-4 right-4 z-[100] flex w-full max-w-sm flex-col gap-2"
-      >
-        {toasts.map((toast) => (
-          <div
-            key={toast.id}
-            role={toast.variant === "error" ? "alert" : "status"}
-            className={`pointer-events-auto flex items-start gap-2 rounded-xl px-4 py-3 text-sm font-medium shadow-lg ring-1 ${
-              toast.variant === "success"
-                ? "bg-emerald-50 text-emerald-800 ring-emerald-200"
-                : "bg-red-50 text-red-800 ring-red-200"
-            }`}
-          >
-            <div className="shrink-0 pt-0.5 text-current" aria-hidden="true">
-              {toast.variant === "success" ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
-            </div>
-            <p className="min-w-0 flex-1">{toast.message}</p>
-            <button
-              type="button"
-              onClick={() => dismiss(toast.id)}
-              className="shrink-0 rounded-md px-1.5 py-0.5 text-xs font-semibold hover:bg-black/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
-              aria-label="Dismiss notification"
-            >
-              Close
-            </button>
-          </div>
-        ))}
       </div>
     </ToastContext.Provider>
   );

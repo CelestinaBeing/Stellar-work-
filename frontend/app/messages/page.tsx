@@ -238,7 +238,7 @@ export default function MessagesPage() {
           No conversations match &ldquo;{search}&rdquo;
         </p>
       ) : (
-        <ul className="space-y-2" aria-label="Conversations">
+        <ul className="space-y-2" aria-label="Conversations" aria-live="polite">
           {filtered.map((convo) => (
             <ConversationRow
               key={convo.peerAddress}
