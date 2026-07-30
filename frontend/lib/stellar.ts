@@ -22,6 +22,7 @@ import {
   getPersistedNetwork,
   getNetworkConfig,
 } from "@/lib/network-config";
+import { recordRecentContractInteraction } from "@/lib/recent-contract-interactions";
 
 function getActiveNetwork(): StellarNetwork {
   if (typeof window !== "undefined") {
@@ -159,7 +160,24 @@ export async function callContract(
   const signedTx = TransactionBuilder.fromXDR(signedXdr, networkPassphrase);
   const sent = await server.sendTransaction(signedTx);
 
+  if (sent.hash) {
+    recordRecentContractInteraction({
+      hash: sent.hash,
+      status: "PENDING",
+      timestamp: Date.now(),
+      method,
+    });
+  }
+
   if (sent.status === "ERROR") {
+    if (sent.hash) {
+      recordRecentContractInteraction({
+        hash: sent.hash,
+        status: "ERROR",
+        timestamp: Date.now(),
+        method,
+      });
+    }
     throw new Error(sent.errorResult?.toXDR().toString() ?? "Contract invocation failed.");
   }
 
@@ -173,10 +191,22 @@ export async function callContract(
       const status = await server.getTransaction(sent.hash);
 
       if (status.status === rpc.Api.GetTransactionStatus.SUCCESS) {
+        recordRecentContractInteraction({
+          hash: sent.hash,
+          status: "SUCCESS",
+          timestamp: Date.now(),
+          method,
+        });
         return { status: "SUCCESS", hash: sent.hash };
       }
 
       if (status.status === rpc.Api.GetTransactionStatus.FAILED) {
+        recordRecentContractInteraction({
+          hash: sent.hash,
+          status: "ERROR",
+          timestamp: Date.now(),
+          method,
+        });
         return {
           status: "ERROR",
           hash: sent.hash,
@@ -188,6 +218,15 @@ export async function callContract(
     throw new Error(
       `Transaction timed out after ${pollTimeout}ms. Hash: ${sent.hash}`,
     );
+  }
+
+  if (sent.hash) {
+    recordRecentContractInteraction({
+      hash: sent.hash,
+      status: "SUCCESS",
+      timestamp: Date.now(),
+      method,
+    });
   }
 
   return { status: "SUCCESS", hash: sent.hash };

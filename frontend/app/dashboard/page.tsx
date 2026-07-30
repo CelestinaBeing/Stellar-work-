@@ -21,6 +21,7 @@ import NoResultsState from "@/components/NoResultsState";
 import SectionCard from "@/components/SectionCard";
 import StatusPill from "@/components/StatusPill";
 import { useToast } from "@/components/ToastProvider";
+import RecentContractInteractionsWidget from "@/app/dashboard/RecentContractInteractionsWidget";
 import { useNotifications, getEventLabel } from "@/lib/notifications-context";
 import { formatDeadline, toXlm } from "@/lib/format";
 import { isConfirmSuppressed, CONFIRM_KEYS } from "@/lib/confirm-prefs";
@@ -419,6 +420,8 @@ export default function DashboardPage() {
           <p className="text-xs text-slate-500">Your jobs on record</p>
         </div>
       </div>
+
+      <RecentContractInteractionsWidget />
 
       {/* Activity Feed */}
       {notifications.length > 0 && (
