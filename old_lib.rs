@@ -611,53 +611,6 @@ impl EscrowContract {
         );
     }
 
-    pub fn cancel_with_refund(
-        e: Env,
-        client: Address,
-        freelancer: Address,
-        job_id: u64,
-        refund_percentage: u32,
-    ) {
-        let mut job = get_job_or_panic(&e, job_id);
-        client.require_auth();
-        freelancer.require_auth();
-        require_active_access(&e, &client);
-        require_active_access(&e, &freelancer);
-
-        if job.status != JobStatus::InProgress {
-            panic_with_error!(&e, Error::InvalidStatus);
-        }
-        if job.client != client {
-            panic_with_error!(&e, Error::Unauthorized);
-        }
-        if job.freelancer != Option::Some(freelancer.clone()) {
-            panic_with_error!(&e, Error::Unauthorized);
-        }
-        if refund_percentage > 100 {
-            panic_with_error!(&e, Error::InvalidAmount);
-        }
-
-        job.status = JobStatus::Cancelled;
-        set_job(&e, job_id, &job);
-        bump_instance_ttl(&e);
-
-        let client_refund = job.amount * (refund_percentage as i128) / 100;
-        let freelancer_payout = job.amount - client_refund;
-
-        let token_client = token::Client::new(&e, &job.token);
-        if client_refund > 0 {
-            token_client.transfer(&e.current_contract_address(), &client, &client_refund);
-        }
-        if freelancer_payout > 0 {
-            token_client.transfer(&e.current_contract_address(), &freelancer, &freelancer_payout);
-        }
-
-        e.events().publish(
-            (Symbol::new(&e, "cancel_ref"),),
-            (job_id, client_refund, freelancer_payout),
-        );
-    }
-
     pub fn enforce_deadline(e: Env, client: Address, job_id: u64) {
         let mut job = get_job_or_panic(&e, job_id);
         client.require_auth();
@@ -2464,35 +2417,6 @@ mod test {
 
         let post_balance = token_client.balance(&user);
         assert_eq!(post_balance, pre_balance);
-        assert_eq!(client.get_job(&job_id).status, JobStatus::Cancelled);
-    }
-
-    #[test]
-    fn test_cancel_with_refund() {
-        let (env, client, _, user, freelancer, native_token) = setup();
-        let token_client = token::Client::new(&env, &native_token);
-        
-        let job_id = client.post_job(
-            &user,
-            &1_000_000i128,
-            &hash(&env),
-            &32u32,
-            &0u64,
-            &native_token,
-        );
-        client.accept_job(&freelancer, &job_id);
-
-        let pre_user_balance = token_client.balance(&user);
-        let pre_freelancer_balance = token_client.balance(&freelancer);
-
-        client.cancel_with_refund(&user, &freelancer, &job_id, &70u32);
-
-        let post_user_balance = token_client.balance(&user);
-        let post_freelancer_balance = token_client.balance(&freelancer);
-
-        assert_eq!(post_user_balance - pre_user_balance, 700_000);
-        assert_eq!(post_freelancer_balance - pre_freelancer_balance, 300_000);
-        
         assert_eq!(client.get_job(&job_id).status, JobStatus::Cancelled);
     }
 
