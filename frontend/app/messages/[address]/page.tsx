@@ -23,6 +23,10 @@ import {
   formatMessageTime,
   shortAddr,
   sanitiseMessageBody,
+  setTypingStatus,
+  isPeerTyping,
+  clearTypingStatus,
+  areReadReceiptsEnabled,
   type Message,
 } from "@/lib/messaging";
 
@@ -96,7 +100,7 @@ function MessageBubble({
           </span>
           {isMine && (
             <span className="text-[10px] text-slate-400" aria-label={message.read ? "Read" : "Sent"}>
-              {message.read ? "✓✓" : "✓"}
+              {message.read ? "\u2713\u2713" : "\u2713"}
             </span>
           )}
         </div>
@@ -265,17 +269,32 @@ export default function ConversationPage() {
 
   function handleBodyChange(value: string) {
     setBody(value);
+    if (!isTyping && wallet) {
+      setTypingStatus(wallet, peerAddress, true);
+    }
     setIsTyping(true);
     if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-    typingTimerRef.current = setTimeout(() => setIsTyping(false), TYPING_TIMEOUT_MS);
+    typingTimerRef.current = setTimeout(() => {
+      setIsTyping(false);
+      if (wallet) setTypingStatus(wallet, peerAddress, false);
+    }, TYPING_TIMEOUT_MS);
   }
 
-  // Simulate peer typing briefly after they send a message (UX polish).
+  // Poll for peer typing status
+  useEffect(() => {
+    if (!wallet) return;
+    const checkTyping = () => setPeerIsTyping(isPeerTyping(wallet, peerAddress));
+    checkTyping();
+    const id = setInterval(checkTyping, 2000);
+    return () => clearInterval(id);
+  }, [wallet, peerAddress]);
+
   useEffect(() => {
     return () => {
       if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      if (wallet) clearTypingStatus(wallet, peerAddress);
     };
-  }, []);
+  }, [wallet, peerAddress]);
 
   // ── Send ───────────────────────────────────────────────────────────────────
 

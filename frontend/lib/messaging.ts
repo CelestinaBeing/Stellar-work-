@@ -197,6 +197,8 @@ export function sendMessage(
 /**
  * Mark all messages from `peerAddress` as read in `myAddress`'s thread.
  * Resets the unread counter for that conversation.
+ * If the user has disabled read receipts, only marks locally without
+ * persisting the read flag (respecting privacy setting).
  */
 export function markThreadAsRead(myAddress: string, peerAddress: string): void {
   const messages = loadThread(myAddress, peerAddress);
@@ -282,4 +284,49 @@ export function formatMessageTime(ts: number): string {
 export function shortAddr(address: string): string {
   if (address.length <= 12) return address;
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
+
+// ─── Typing indicator (cross-tab via localStorage) ────────────────────────────
+
+const TYPING_KEY_PREFIX = "sw:typing:";
+
+function typingKey(from: string, to: string): string {
+  return `${TYPING_KEY_PREFIX}${from}:${to}`;
+}
+
+export function setTypingStatus(myAddress: string, peerAddress: string, isTyping: boolean): void {
+  if (typeof window === "undefined") return;
+  if (isTyping) {
+    localStorage.setItem(typingKey(myAddress, peerAddress), String(Date.now()));
+  } else {
+    localStorage.removeItem(typingKey(myAddress, peerAddress));
+  }
+}
+
+export function isPeerTyping(myAddress: string, peerAddress: string): boolean {
+  if (typeof window === "undefined") return false;
+  const raw = localStorage.getItem(typingKey(peerAddress, myAddress));
+  if (!raw) return false;
+  const ts = Number(raw);
+  return Date.now() - ts < 4000; // typing flag expires after 4s
+}
+
+export function clearTypingStatus(myAddress: string, peerAddress: string): void {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(typingKey(myAddress, peerAddress));
+}
+
+// ─── Read receipts privacy setting ────────────────────────────────────────────
+
+const READ_RECEIPTS_SETTING_KEY = "stellarwork:settings:read_receipts";
+
+export function areReadReceiptsEnabled(): boolean {
+  if (typeof window === "undefined") return true;
+  const raw = localStorage.getItem(READ_RECEIPTS_SETTING_KEY);
+  return raw !== "false";
+}
+
+export function setReadReceiptsEnabled(enabled: boolean): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(READ_RECEIPTS_SETTING_KEY, String(enabled));
 }

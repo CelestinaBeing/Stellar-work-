@@ -263,6 +263,10 @@ pub enum DataKey {
     SLAConfig(u64),
     SLAAcceptedAt(u64),
     SLABreachPenalty(u64),
+    Attestation(u64),
+    UserAttestations(Address),
+    JobVisibility(u64),
+    InvitedFreelancer(u64, Address),
 }
 
 fn require_admin(env: &Env) -> Address {
@@ -388,6 +392,25 @@ pub struct SLAStatus {
     pub penalty_applied: bool,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Attestation {
+    pub job_id: u64,
+    pub client: Address,
+    pub freelancer: Address,
+    pub approved_at: u64,
+    pub attestation_hash: BytesN<32>,
+    pub metadata_uri: soroban_sdk::String,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum JobVisibility {
+    Public,
+    Private,
+    InviteOnly,
+}
+
 #[contract]
 pub struct EscrowContract;
 
@@ -414,6 +437,8 @@ impl EscrowContract {
 
     pub fn get_desc_payload_max(env: Env) -> u32 {
         env.storage().instance().get(&DataKey::DescPayloadMax).unwrap_or(MAX_DESC_PAYLOAD)
+    }
+
 fn get_job(env: &Env, job_id: u64) -> Job {
     env.storage()
         .persistent()
@@ -7907,6 +7932,145 @@ mod test {
             .get(&DataKey::CrossChainJob(cross_chain_id))
             .expect("Cross-chain job not found")
     }
+
+    pub fn approve_work_with_attestation(
+        env: Env,
+        client: Address,
+        job_id: u64,
+        attestation_hash: BytesN<32>,
+        metadata_uri: soroban_sdk::String,
+    ) -> Result<(), Error> {
+        Self::approve_work(env.clone(), client.clone(), job_id)?;
+        let job = get_job(&env, job_id);
+        let attestation = Attestation {
+            job_id,
+            client: client.clone(),
+            freelancer: job.freelancer.clone().unwrap(),
+            approved_at: env.ledger().timestamp(),
+            attestation_hash,
+            metadata_uri,
+        };
+        env.storage().persistent().set(&DataKey::Attestation(job_id), &attestation);
+        let mut user_atts: Vec<u64> = env.storage().persistent().get(&DataKey::UserAttestations(client.clone())).unwrap_or(Vec::new(&env));
+        user_atts.push_back(job_id);
+        env.storage().persistent().set(&DataKey::UserAttestations(client.clone()), &user_atts);
+        env.events().publish(
+            (symbol_short!("attested"),),
+            (job_id, client, attestation.approved_at),
+        );
+        Ok(())
+    }
+
+    pub fn get_attestation(env: Env, job_id: u64) -> Attestation {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Attestation(job_id))
+            .expect("Attestation not found")
+    }
+
+    pub fn get_user_attestations(env: Env, user: Address) -> Vec<Attestation> {
+        let ids: Vec<u64> = env.storage()
+            .persistent()
+            .get(&DataKey::UserAttestations(user))
+            .unwrap_or(Vec::new(&env));
+        let mut result = Vec::new(&env);
+        let mut i: u32 = 0;
+        while i < ids.len() {
+            if let Some(att) = env.storage().persistent().get::<DataKey, Attestation>(&DataKey::Attestation(ids.get(i).unwrap())) {
+                result.push_back(att);
+            }
+            i += 1;
+        }
+        result
+    }
+
+    pub fn set_job_visibility(env: Env, client: Address, job_id: u64, visibility: JobVisibility) -> Result<(), Error> {
+        client.require_auth();
+        let job = get_job(&env, job_id);
+        if job.client != client {
+            return Err(Error::Unauthorized);
+        }
+        env.storage().persistent().set(&DataKey::JobVisibility(job_id), &visibility);
+        Ok(())
+    }
+
+    pub fn get_job_visibility(env: Env, job_id: u64) -> JobVisibility {
+        env.storage()
+            .persistent()
+            .get(&DataKey::JobVisibility(job_id))
+            .unwrap_or(JobVisibility::Public)
+    }
+
+    pub fn is_job_visible_to(env: Env, job_id: u64, viewer: Address) -> bool {
+        let job = get_job(&env, job_id);
+        let visibility = env.storage()
+            .persistent()
+            .get(&DataKey::JobVisibility(job_id))
+            .unwrap_or(JobVisibility::Public);
+        match visibility {
+            JobVisibility::Public => true,
+            JobVisibility::Private => viewer == job.client,
+            JobVisibility::InviteOnly => {
+                viewer == job.client
+                    || env.storage()
+                        .persistent()
+                        .has(&DataKey::InvitedFreelancer(job_id, viewer))
+            }
+        }
+    }
+
+    pub fn add_invited_freelancer(env: Env, client: Address, job_id: u64, freelancer: Address) -> Result<(), Error> {
+        client.require_auth();
+        let job = get_job(&env, job_id);
+        if job.client != client {
+            return Err(Error::Unauthorized);
+        }
+        env.storage().persistent().set(&DataKey::InvitedFreelancer(job_id, freelancer), &true);
+        Ok(())
+    }
+
+    pub fn remove_invited_freelancer(env: Env, client: Address, job_id: u64, freelancer: Address) -> Result<(), Error> {
+        client.require_auth();
+        let job = get_job(&env, job_id);
+        if job.client != client {
+            return Err(Error::Unauthorized);
+        }
+        env.storage().persistent().remove(&DataKey::InvitedFreelancer(job_id, freelancer));
+        Ok(())
+    }
+
+    pub fn get_jobs_batch_visible_to(env: Env, start: u64, limit: u32, viewer: Address) -> Vec<Job> {
+        let count: u64 = env.storage().instance().get(&DataKey::JobCount).unwrap_or(0);
+        let mut jobs = Vec::new(&env);
+        if start == 0 || limit == 0 || start > count {
+            return jobs;
+        }
+        let end = core::cmp::min(count, start.saturating_add(limit as u64).saturating_sub(1));
+        let mut cursor = start;
+        while cursor <= end {
+            if let Ok(job) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                get_job(&env, cursor)
+            })) {
+                let visibility = env.storage()
+                    .persistent()
+                    .get::<DataKey, JobVisibility>(&DataKey::JobVisibility(cursor))
+                    .unwrap_or(JobVisibility::Public);
+                let visible = match visibility {
+                    JobVisibility::Public => true,
+                    JobVisibility::Private => job.client == viewer,
+                    JobVisibility::InviteOnly => {
+                        job.client == viewer
+                            || env.storage().persistent().has(&DataKey::InvitedFreelancer(cursor, viewer.clone()))
+                    }
+                };
+                if visible {
+                    jobs.push_back(job);
+                }
+            }
+            cursor = cursor.saturating_add(1);
+        }
+        jobs
+    }
 }
 
 #[cfg(test)]
@@ -8453,5 +8617,65 @@ mod test {
     fn test_update_approval_window_non_admin_fails() {
         let (_, client, _, user, _, _) = setup();
         client.update_approval_window(&user, &(7 * 24 * 60 * 60));
+    }
+
+    #[test]
+    fn test_attestation_created_on_approve() {
+        let (env, client, _, user, freelancer, native_token) = setup();
+        let hash = BytesN::from_array(&env, &[7; 32]);
+        let job_id = client.post_job(&user, &1_000_000i128, &hash, &32u32, &0u64, &native_token);
+        client.accept_job(&freelancer, &job_id);
+        client.submit_work(&freelancer, &job_id);
+        let zero_hash = BytesN::from_array(&env, &[0u8; 32]);
+        let metadata = String::from_str(&env, "");
+        client.approve_work_with_attestation(&user, &job_id, &zero_hash, &metadata);
+        let attestation = client.get_attestation(&job_id);
+        assert_eq!(attestation.job_id, job_id);
+    }
+
+    #[test]
+    fn test_get_user_attestations() {
+        let (env, client, _, user, freelancer, native_token) = setup();
+        let hash = BytesN::from_array(&env, &[7; 32]);
+        let job_id = client.post_job(&user, &1_000_000i128, &hash, &32u32, &0u64, &native_token);
+        client.accept_job(&freelancer, &job_id);
+        client.submit_work(&freelancer, &job_id);
+        let zero_hash = BytesN::from_array(&env, &[0u8; 32]);
+        let metadata = String::from_str(&env, "");
+        client.approve_work_with_attestation(&user, &job_id, &zero_hash, &metadata);
+        let atts = client.get_user_attestations(&user);
+        assert_eq!(atts.len(), 1);
+    }
+
+    #[test]
+    fn test_job_visibility_defaults_to_public() {
+        let (env, client, _, user, _, native_token) = setup();
+        let hash = BytesN::from_array(&env, &[7; 32]);
+        let job_id = client.post_job(&user, &1_000_000i128, &hash, &32u32, &0u64, &native_token);
+        let vis = client.get_job_visibility(&job_id);
+        assert_eq!(vis, JobVisibility::Public);
+    }
+
+    #[test]
+    fn test_set_job_visibility_private() {
+        let (env, client, _, user, _, native_token) = setup();
+        let hash = BytesN::from_array(&env, &[7; 32]);
+        let job_id = client.post_job(&user, &1_000_000i128, &hash, &32u32, &0u64, &native_token);
+        client.set_job_visibility(&user, &job_id, &JobVisibility::Private);
+        let vis = client.get_job_visibility(&job_id);
+        assert_eq!(vis, JobVisibility::Private);
+    }
+
+    #[test]
+    fn test_invited_freelancer_visibility() {
+        let (env, client, _, user, freelancer, native_token) = setup();
+        let hash = BytesN::from_array(&env, &[7; 32]);
+        let job_id = client.post_job(&user, &1_000_000i128, &hash, &32u32, &0u64, &native_token);
+        client.set_job_visibility(&user, &job_id, &JobVisibility::InviteOnly);
+        assert!(!client.is_job_visible_to(&job_id, &freelancer));
+        client.add_invited_freelancer(&user, &job_id, &freelancer);
+        assert!(client.is_job_visible_to(&job_id, &freelancer));
+        client.remove_invited_freelancer(&user, &job_id, &freelancer);
+        assert!(!client.is_job_visible_to(&job_id, &freelancer));
     }
 }
