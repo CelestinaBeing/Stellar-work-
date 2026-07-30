@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "analyze": "ANALYZE=true npm run build",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -36,6 +37,7 @@
   },
   "devDependencies": {
     "@chromatic-com/storybook": "^5.2.1",
+    "@next/bundle-analyzer": "16.2.3",
     "@playwright/test": "^1.59.1",
     "@storybook/addon-a11y": "^10.4.6",
     "@storybook/addon-vitest": "^10.4.6",
