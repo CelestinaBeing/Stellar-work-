@@ -7,6 +7,7 @@ import { WalletProvider } from "@/lib/wallet-context";
 import { ToastProvider } from "@/components/ToastProvider";
 import { NotificationProvider } from "@/lib/notifications-context";
 import { MessagingProvider } from "@/lib/messaging-context";
+import { MeetingsProvider } from "@/lib/meetings-context";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { TypographyProvider } from "@/lib/typography-context";
 import { NetworkProvider } from "@/lib/network-context";
@@ -141,6 +142,7 @@ export default async function RootLayout({
         <WalletProvider>
           <NotificationProvider>
           <MessagingProvider>
+          <MeetingsProvider>
           <ToastProvider>
           <a
             href="#main-content"
@@ -188,6 +190,7 @@ export default async function RootLayout({
           <InstallPrompt />
           <AppFooter />
           </ToastProvider>
+          </MeetingsProvider>
           </MessagingProvider>
           </NotificationProvider>
         </WalletProvider>

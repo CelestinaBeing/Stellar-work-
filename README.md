@@ -19,6 +19,27 @@ stellarwork
 └── docs
 ```
 
+## Local DevNet (Isolated Testing)
+
+For fully isolated contract testing without relying on public testnets, use the devnet scripts:
+
+```bash
+# 1. Set up a local Soroban devnet (requires Docker)
+./scripts/setup-devnet.sh
+
+# 2. Reset the devnet state when needed
+./scripts/reset-devnet.sh
+
+# 3. Run tests against the local devnet
+./scripts/run-tests-local.sh
+```
+
+The setup script:
+- Starts a Stellar Quickstart container with a standalone network
+- Funds a test admin account
+- Deploys and initializes the escrow contract
+- Saves configuration to `.env.dev`
+
 ## Local Setup
 
 ### Using Docker (Recommended)
