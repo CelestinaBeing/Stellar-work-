@@ -13,6 +13,7 @@ import {
   formatCooldown,
   type RateLimitStatus,
 } from "@/lib/rate-limiter";
+import { StrKey } from "@stellar/stellar-sdk";
 
 const MIN_JOB_AMOUNT_XLM = 0.5;
 const DRAFT_STORAGE_KEY_PREFIX = "stellarwork:post-job-draft:";
@@ -323,6 +324,11 @@ export default function PostJobPage() {
             }
             if (!tokenAddress.trim()) {
               nextFieldErrors.tokenAddress = "Token address is required.";
+            } else if (
+              !StrKey.isValidContractId(tokenAddress.trim()) &&
+              !StrKey.isValidEd25519PublicKey(tokenAddress.trim())
+            ) {
+              nextFieldErrors.tokenAddress = "Invalid Stellar address or contract ID.";
             }
             if (Object.keys(nextFieldErrors).length > 0) {
               setFieldErrors(nextFieldErrors);
