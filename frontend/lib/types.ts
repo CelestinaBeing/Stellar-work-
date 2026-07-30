@@ -7,6 +7,8 @@ export type JobStatus =
   | "Disputed";
 
 export interface Job {
+  /** Schema version for contract upgrades. Initialized to 1. */
+  version?: number;
   client: string;
   freelancer: string | null;
   amount: string;

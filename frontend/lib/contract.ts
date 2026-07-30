@@ -507,3 +507,37 @@ export async function relayCancelJob(relayer: string, client: string, jobId: str
   ]);
 }
 
+// ─── SC-106: Job Versioning ───────────────────────────────────────────────────
+
+/**
+ * Returns the schema version number for a given job.
+ * All jobs created from this schema version onwards will have version = 1.
+ */
+export async function getJobVersion(jobId: string): Promise<number> {
+  const response = await callContract(
+    getActiveContractId(),
+    "get_job_version",
+    [nativeToScVal(jobId, { type: "u64" })],
+    { readOnly: true },
+  );
+  return Number(response.data ?? 1);
+}
+
+/**
+ * Migrate a job's schema version to a target version.
+ * Only the job's client or the platform admin may call this.
+ * The targetVersion must be >= the current version (no downgrades allowed).
+ * Returns the new version number.
+ */
+export async function migrateJobVersion(
+  caller: string,
+  jobId: string,
+  targetVersion: number,
+): Promise<number> {
+  const response = await callContract(getActiveContractId(), "migrate_job_version", [
+    nativeToScVal(caller, { type: "address" }),
+    nativeToScVal(jobId, { type: "u64" }),
+    nativeToScVal(targetVersion, { type: "u32" }),
+  ]);
+  return Number(response.data ?? targetVersion);
+}
