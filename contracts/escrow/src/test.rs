@@ -1,0 +1,284 @@
+#![cfg(test)]
+use super::*;
+use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, vec, IntoVal};
+
+#[allow(deprecated)]
+fn setup_test(env: &Env) -> (Address, Address, Address, Address, Address) {
+    env.mock_all_auths();
+
+    let admin = Address::generate(env);
+    let client = Address::generate(env);
+    let freelancer = Address::generate(env);
+    let token = env.register_stellar_asset_contract(client.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(env, &token);
+    token_admin.mint(&client, &1000_0000000i128);
+
+    let contract_id = env.register_contract(None, EscrowContract);
+    let escrow = EscrowContractClient::new(env, &contract_id);
+
+    escrow.initialize(&admin, &token);
+    escrow.add_allowed_token(&admin, &token);
+
+    (admin, client, freelancer, token, contract_id)
+}
+
+fn new_escrow<'a>(env: &'a Env, contract_id: &Address) -> EscrowContractClient<'a> {
+    EscrowContractClient::new(env, contract_id)
+}
+
+#[test]
+fn test_initialize() {
+    let env = Env::default();
+    let (_admin, _client, _freelancer, _token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    assert_eq!(escrow.get_job_count(), 0);
+}
+
+#[test]
+fn test_post_and_get_job() {
+    let env = Env::default();
+    let (admin, client, _freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let deadline: u64 = 1000;
+    let amount: i128 = 100_0000000;
+
+    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token);
+    assert_eq!(job_id, 1);
+    assert_eq!(escrow.get_job_count(), 1);
+
+    let job = escrow.get_job(&job_id);
+    assert_eq!(job.client, client);
+    assert_eq!(job.amount, amount);
+    assert_eq!(job.status, JobStatus::Open);
+}
+
+#[test]
+fn test_full_job_lifecycle() {
+    let env = Env::default();
+    let (admin, client, freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let deadline: u64 = 1000;
+    let amount: i128 = 100_0000000;
+
+    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token);
+    escrow.accept_job(&freelancer, &job_id);
+    assert_eq!(escrow.get_job(&job_id).status, JobStatus::InProgress);
+    escrow.submit_work(&freelancer, &job_id);
+    assert_eq!(escrow.get_job(&job_id).status, JobStatus::SubmittedForReview);
+    escrow.approve_work(&client, &job_id);
+    assert_eq!(escrow.get_job(&job_id).status, JobStatus::Completed);
+    assert_eq!(escrow.get_completed_jobs_count(), 1);
+}
+
+#[test]
+fn test_cancel_job() {
+    let env = Env::default();
+    let (admin, client, _freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let deadline: u64 = 1000;
+    let amount: i128 = 100_0000000;
+
+    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token);
+    escrow.cancel_job(&client, &job_id);
+    assert_eq!(escrow.get_job(&job_id).status, JobStatus::Cancelled);
+}
+
+#[test]
+fn test_cancel_with_rebate_within_grace_period() {
+    let env = Env::default();
+    let (admin, client, _freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let deadline: u64 = 1000;
+    let amount: i128 = 100_0000000;
+
+    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token);
+    let info = escrow.get_cancellation_rebate_info(&job_id);
+    assert!(info.is_eligible);
+    escrow.cancel_with_rebate(&client, &job_id);
+    assert_eq!(escrow.get_job(&job_id).status, JobStatus::Cancelled);
+}
+
+#[test]
+fn test_get_cancellation_rebate_info_eligible() {
+    let env = Env::default();
+    let (admin, client, _freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let deadline: u64 = 1000;
+    let amount: i128 = 100_0000000;
+
+    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token);
+    let info = escrow.get_cancellation_rebate_info(&job_id);
+    assert!(info.is_eligible);
+    assert_eq!(info.grace_deadline, CANCELLATION_GRACE_PERIOD);
+}
+
+#[test]
+fn test_freelancer_cancel_job() {
+    let env = Env::default();
+    let (admin, client, freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let deadline: u64 = 1000;
+    let amount: i128 = 100_0000000;
+
+    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token);
+    escrow.accept_job(&freelancer, &job_id);
+    escrow.freelancer_cancel_job(&freelancer, &job_id);
+    assert_eq!(escrow.get_job(&job_id).status, JobStatus::Cancelled);
+}
+
+#[test]
+fn test_enforce_deadline() {
+    let env = Env::default();
+    let (admin, client, _freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let deadline: u64 = 10;
+    let amount: i128 = 100_0000000;
+
+    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token);
+    env.ledger().set_sequence_number(deadline as u32 + 1);
+    escrow.enforce_deadline(&client, &job_id);
+    assert_eq!(escrow.get_job(&job_id).status, JobStatus::Cancelled);
+}
+
+#[test]
+fn test_dispute_and_resolve() {
+    let env = Env::default();
+    let (admin, client, freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let deadline: u64 = 1000;
+    let amount: i128 = 100_0000000;
+
+    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token);
+    escrow.accept_job(&freelancer, &job_id);
+    escrow.raise_dispute(&client, &job_id);
+    assert_eq!(escrow.get_job(&job_id).status, JobStatus::Disputed);
+    escrow.resolve_dispute(&admin, &job_id, &client);
+    assert_eq!(escrow.get_job(&job_id).status, JobStatus::Completed);
+}
+
+#[test]
+fn test_admin_operations() {
+    let env = Env::default();
+    let (admin, client, _freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let deadline: u64 = 1000;
+    let amount: i128 = 100_0000000;
+
+    let _job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token);
+    let all_jobs = escrow.admin_get_all_jobs(&admin);
+    assert_eq!(all_jobs.len(), 1);
+    let open_jobs = escrow.admin_get_jobs_by_status(&admin, &JobStatus::Open);
+    assert_eq!(open_jobs.len(), 1);
+}
+
+#[test]
+fn test_whitelist_blacklist() {
+    let env = Env::default();
+    let (admin, _client, _freelancer, _token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let addr = Address::generate(&env);
+
+    escrow.set_whitelist_mode(&admin, &true);
+    assert!(escrow.is_whitelist_mode_enabled());
+    escrow.add_to_whitelist(&admin, &addr);
+    assert!(escrow.is_whitelisted_public(&addr));
+    escrow.remove_from_whitelist(&admin, &addr);
+    assert!(!escrow.is_whitelisted_public(&addr));
+    escrow.add_to_blacklist(&admin, &addr);
+    assert!(escrow.is_blacklisted_public(&addr));
+    escrow.remove_from_blacklist(&admin, &addr);
+    assert!(!escrow.is_blacklisted_public(&addr));
+}
+
+#[test]
+fn test_token_management() {
+    let env = Env::default();
+    let (admin, _client, _freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let new_token = Address::generate(&env);
+
+    assert!(escrow.is_token_allowed(&token));
+    assert!(!escrow.is_token_allowed(&new_token));
+    escrow.add_allowed_token(&admin, &new_token);
+    assert!(escrow.is_token_allowed(&new_token));
+    escrow.remove_allowed_token(&admin, &new_token);
+    assert!(!escrow.is_token_allowed(&new_token));
+}
+
+#[test]
+fn test_fees_and_withdraw() {
+    let env = Env::default();
+    let (admin, client, freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let deadline: u64 = 1000;
+    let amount: i128 = 100_0000000;
+
+    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token);
+    escrow.accept_job(&freelancer, &job_id);
+    escrow.submit_work(&freelancer, &job_id);
+    escrow.approve_work(&client, &job_id);
+    let fees = escrow.get_fees();
+    assert!(fees > 0);
+    escrow.withdraw_fees(&admin, &fees, &token);
+    assert_eq!(escrow.get_fees(), 0);
+}
+
+#[test]
+fn test_milestones() {
+    let env = Env::default();
+    let (admin, client, freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let deadline: u64 = 1000;
+
+    let m1 = Milestone {
+        id: 0,
+        description_hash: BytesN::from_array(&env, &[1u8; 32]),
+        amount: 30_0000000i128,
+        is_released: false,
+    };
+    let m2 = Milestone {
+        id: 0,
+        description_hash: BytesN::from_array(&env, &[2u8; 32]),
+        amount: 70_0000000i128,
+        is_released: false,
+    };
+    let milestones = vec![&env, m1, m2];
+
+    let job_id = escrow.create_job_with_milestones(&client, &milestones, &deadline, &token);
+    assert_eq!(job_id, 1);
+
+    escrow.accept_job(&freelancer, &job_id);
+    escrow.approve_milestone(&client, &job_id, &0u32);
+
+    let stored = escrow.get_milestones(&job_id);
+    assert_eq!(stored.len(), 2);
+    assert!(stored.get(0).unwrap().is_released);
+    assert!(!stored.get(1).unwrap().is_released);
+}
+
+#[test]
+fn test_trusted_forwarder() {
+    let env = Env::default();
+    let (admin, client, _freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let forwarder = Address::generate(&env);
+
+    escrow.set_trusted_forwarder(&admin, &forwarder);
+    assert!(escrow.is_trusted_forwarder(&forwarder));
+
+    let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let deadline: u64 = 1000;
+    let job_id = escrow.post_job(&client, &100_0000000i128, &desc_hash, &100u32, &deadline, &token);
+    escrow.relay_cancel_job(&forwarder, &client, &job_id);
+    assert_eq!(escrow.get_job(&job_id).status, JobStatus::Cancelled);
+}

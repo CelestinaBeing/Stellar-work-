@@ -12,6 +12,8 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useWallet } from "@/lib/wallet-context";
 import { useMessaging } from "@/lib/messaging-context";
+import CallButton from "@/components/CallButton";
+import CallHistory from "@/components/CallHistory";
 import {
   loadThread,
   sendMessage,
@@ -408,13 +410,18 @@ export default function ConversationPage() {
           <p className="truncate text-[10px] text-slate-400">{peerAddress}</p>
         </div>
 
-        <Link
-          href={`/profile/${peerAddress}`}
-          className="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
-        >
-          View Profile
-        </Link>
+        <div className="flex items-center gap-1.5">
+          <CallButton myAddress={wallet} peerAddress={peerAddress} variant="voice" size="sm" />
+          <CallButton myAddress={wallet} peerAddress={peerAddress} variant="video" size="sm" />
+          <Link
+            href={`/profile/${peerAddress}`}
+            className="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+          >
+            View Profile
+          </Link>
+        </div>
       </div>
+      <CallHistory peerAddress={peerAddress} />
 
       {/* Message list */}
       <div
