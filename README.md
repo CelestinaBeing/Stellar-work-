@@ -2,8 +2,11 @@
 
 [![Production Deployment](https://img.shields.io/github/actions/workflow/status/your-org/Stellar-work-/deploy-production.yml?branch=main&label=production&logo=vercel)](https://github.com/your-org/Stellar-work-/actions/workflows/deploy-production.yml)
 [![Preview Deployments](https://img.shields.io/github/actions/workflow/status/your-org/Stellar-work-/deploy-preview.yml?label=preview&logo=vercel)](https://github.com/your-org/Stellar-work-/actions/workflows/deploy-preview.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/your-org/Stellar-work-/ci.yml?label=ci&logo=github)](https://github.com/your-org/Stellar-work-/actions/workflows/ci.yml)
 [![Frontend CI](https://img.shields.io/github/actions/workflow/status/your-org/Stellar-work-/frontend.yml?label=frontend+ci&logo=github)](https://github.com/your-org/Stellar-work-/actions/workflows/frontend.yml)
 [![Contract CI](https://img.shields.io/github/actions/workflow/status/your-org/Stellar-work-/contract.yml?label=contract+ci&logo=rust)](https://github.com/your-org/Stellar-work-/actions/workflows/contract.yml)
+[![Lighthouse](https://img.shields.io/badge/performance-≥90-brightgreen?logo=lighthouse&label=lighthouse)](https://github.com/your-org/Stellar-work-/actions/workflows/lighthouse.yml)
+[![Code Coverage](https://img.shields.io/codecov/c/github/your-org/Stellar-work-?logo=codecov)](https://codecov.io/gh/your-org/Stellar-work-)
 
 StellarWork is an open-source decentralized freelance marketplace on Stellar. Payments are held in Soroban escrow and released by state transitions, not platform custody logic.
 
@@ -15,6 +18,27 @@ stellarwork
 ├── frontend
 └── docs
 ```
+
+## Local DevNet (Isolated Testing)
+
+For fully isolated contract testing without relying on public testnets, use the devnet scripts:
+
+```bash
+# 1. Set up a local Soroban devnet (requires Docker)
+./scripts/setup-devnet.sh
+
+# 2. Reset the devnet state when needed
+./scripts/reset-devnet.sh
+
+# 3. Run tests against the local devnet
+./scripts/run-tests-local.sh
+```
+
+The setup script:
+- Starts a Stellar Quickstart container with a standalone network
+- Funds a test admin account
+- Deploys and initializes the escrow contract
+- Saves configuration to `.env.dev`
 
 ## Local Setup
 
@@ -236,6 +260,17 @@ For third-party integration, see `docs/INTEGRATION.md`.
 
 For the full documentation index, see [docs/README.md](docs/README.md).
 
+## Translation Status
+
+StellarWork supports multiple languages. Community contributions to add or maintain translations are welcome — see [docs/TRANSLATING.md](docs/TRANSLATING.md) for a step-by-step guide.
+
+| Locale | Language | Status | Maintainer |
+|--------|----------|--------|------------|
+| `en` | English | ✅ Complete (reference) | Core team |
+| `es` | Spanish | ✅ Complete | Community |
+
+To add a new language, follow the [translation guide](docs/TRANSLATING.md).
+
 ## Production Operations
 
 For deploying and operating StellarWork in production, start with these three documents:
@@ -261,6 +296,11 @@ Step-by-step video walkthroughs for the most common workflows. Videos are record
 > When videos are published, replace "Planned" with a link to the video (e.g., `[Watch →](https://youtube.com/...)`).
 
 For recording setup, script templates, format guidelines, and closed captioning standards, see [docs/VIDEO_TUTORIALS.md](docs/VIDEO_TUTORIALS.md).
+
+## Code of Conduct
+
+This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
+All contributors are expected to uphold our community standards.
 
 ## License
 

@@ -1,7 +1,7 @@
 DOCKER = docker
 COMPOSE = docker compose
 
-.PHONY: help up down build test-contract lint-frontend dev clean
+.PHONY: help up down build test-contract coverage-contract lint-frontend dev clean
 
 help:
 	@echo "StellarWork Development Commands"
@@ -11,6 +11,7 @@ help:
 	@echo "make build            Build frontend for production"
 	@echo "make dev              Start frontend dev server (without Docker)"
 	@echo "make test-contract    Run contract unit tests"
+	@echo "make coverage-contract Run contract test coverage analysis"
 	@echo "make test-frontend    Run frontend unit tests"
 	@echo "make lint-frontend    Run ESLint on frontend"
 	@echo "make typecheck        Run TypeScript type checking"
@@ -30,6 +31,9 @@ dev:
 
 test-contract:
 	cd contracts/escrow && cargo test
+
+coverage-contract:
+	./contracts/coverage.sh
 
 test-frontend:
 	cd frontend && npm test

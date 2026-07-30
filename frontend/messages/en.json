@@ -134,5 +134,22 @@
     "generic": "Something went wrong",
     "notFound": "Page not found",
     "unauthorized": "Not authorized"
+  },
+  "settings": {
+    "typography": {
+      "sectionTitle": "Typography",
+      "sectionDescription": "Adjust text size and spacing to improve readability.",
+      "fontSize": "Font size",
+      "fontSizeSmall": "Small (14px)",
+      "fontSizeMedium": "Medium (16px) — default",
+      "fontSizeLarge": "Large (18px)",
+      "fontSizeXLarge": "Extra Large (20px)",
+      "lineSpacing": "Line spacing",
+      "lineSpacingCompact": "Compact (1.4×)",
+      "lineSpacingNormal": "Normal (1.6×) — default",
+      "lineSpacingRelaxed": "Relaxed (1.8×)",
+      "resetDefaults": "Reset to defaults",
+      "previewLabel": "Typography preview"
+    }
   }
 }

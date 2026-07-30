@@ -2,21 +2,29 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
+import dynamic from "next/dynamic";
 import { WalletProvider } from "@/lib/wallet-context";
 import { ToastProvider } from "@/components/ToastProvider";
 import { NotificationProvider } from "@/lib/notifications-context";
 import { MessagingProvider } from "@/lib/messaging-context";
+import { MeetingsProvider } from "@/lib/meetings-context";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import { TypographyProvider } from "@/lib/typography-context";
+import { NetworkProvider } from "@/lib/network-context";
 import { Navigation } from "./navigation";
 import { ScrollRestorer } from "@/components/ScrollRestorer";
 import ErrorBoundary from "@/components/ErrorBoundary";
-import CommandPalette from "@/components/CommandPalette";
-import ShortcutCheatSheet from "@/components/ShortcutCheatSheet";
-import OnboardingProvider from "@/components/OnboardingProvider";
-import AnnouncementBanner from "@/components/AnnouncementBanner";
 import JsonLd from "@/components/JsonLd";
 import AppFooter from "@/components/AppFooter";
+import OfflineIndicator from "@/components/OfflineIndicator";
 import "./globals.css";
+
+const CommandPalette = dynamic(() => import("@/components/CommandPalette"), { ssr: false });
+const ShortcutCheatSheet = dynamic(() => import("@/components/ShortcutCheatSheet"), { ssr: false });
+const OnboardingProvider = dynamic(() => import("@/components/OnboardingProvider"), { ssr: false });
+const InstallPrompt = dynamic(() => import("@/components/InstallPrompt"), { ssr: false });
+const ServiceWorkerRegistration = dynamic(() => import("@/components/ServiceWorkerRegistration"), { ssr: false });
+const AnnouncementBanner = dynamic(() => import("@/components/AnnouncementBanner"), { ssr: false });
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -37,7 +45,7 @@ export const viewport: Viewport = {
 const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "https://stellarwork.app";
 
 export const metadata: Metadata = {
-  metadataBase: new URL(BASE_URL),
+    metadataBase: new URL(BASE_URL),
   title: {
     default: "StellarWork — Decentralized Freelance Marketplace on Stellar",
     template: "%s | StellarWork",
@@ -56,6 +64,7 @@ export const metadata: Metadata = {
   ],
   authors: [{ name: "StellarWork" }],
   creator: "StellarWork",
+  manifest: "/manifest.json",
   openGraph: {
     type: "website",
     locale: "en_US",
@@ -128,9 +137,12 @@ export default async function RootLayout({
         />
         <NextIntlClientProvider messages={messages} locale={locale}>
         <ThemeProvider>
+        <TypographyProvider>
+        <NetworkProvider>
         <WalletProvider>
           <NotificationProvider>
           <MessagingProvider>
+          <MeetingsProvider>
           <ToastProvider>
           <a
             href="#main-content"
@@ -138,7 +150,9 @@ export default async function RootLayout({
           >
             Skip to main content
           </a>
+          <ServiceWorkerRegistration />
           <AnnouncementBanner />
+          <OfflineIndicator />
           <Navigation />
           <CommandPalette />
           <ShortcutCheatSheet />
@@ -147,11 +161,41 @@ export default async function RootLayout({
           <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-5xl flex-1 px-3 py-6 sm:px-4 sm:py-8">
             <ErrorBoundary>{children}</ErrorBoundary>
           </main>
+          <footer className="mt-auto border-t border-slate-200 bg-white py-8">
+            <div className="mx-auto max-w-5xl px-4">
+              <div className="flex flex-col items-center justify-between gap-6 md:flex-row">
+                <div className="flex flex-col items-center gap-2 md:items-start">
+                  <span className="text-lg font-bold text-slate-900">StellarWork</span>
+                  <p className="text-sm text-slate-500">Decentralized Escrow Marketplace</p>
+                </div>
+
+                <nav className="flex flex-wrap justify-center gap-8 text-sm font-medium text-slate-600">
+                  <a href="https://github.com/anumukul/Stellar-work-" target="_blank" rel="noopener noreferrer" className="hover:text-blue-600 transition-colors">GitHub</a>
+                  <Link href="/docs" className="hover:text-blue-600 transition-colors">Documentation</Link>
+                  <a href="/LICENSE" target="_blank" rel="noopener noreferrer" className="hover:text-blue-600 transition-colors">License</a>
+                  <Link href="/legal/terms" className="hover:text-blue-600 transition-colors">Terms</Link>
+                  <Link href="/legal/privacy" className="hover:text-blue-600 transition-colors">Privacy</Link>
+                </nav>
+
+                <div className="flex items-center gap-2 rounded-full bg-slate-50 px-4 py-2 border border-slate-100">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Built on</span>
+                  <span className="text-sm font-bold text-slate-800">Stellar</span>
+                </div>
+              </div>
+              <div className="mt-8 border-t border-slate-100 pt-8 text-center text-xs text-slate-400">
+                &copy; {new Date().getFullYear()} StellarWork. All rights reserved.
+              </div>
+            </div>
+          </footer>
+          <InstallPrompt />
           <AppFooter />
           </ToastProvider>
+          </MeetingsProvider>
           </MessagingProvider>
           </NotificationProvider>
         </WalletProvider>
+        </TypographyProvider>
+        </NetworkProvider>
         </ThemeProvider>
         </NextIntlClientProvider>
       </body>

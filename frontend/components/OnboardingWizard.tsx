@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
 const STORAGE_KEY = "stellarwork:onboarding-complete";
 const HELP_STORAGE_KEY = "stellarwork:onboarding-dismissed";
@@ -9,6 +10,10 @@ interface Step {
   title: string;
   description: string;
   tip?: string;
+  link?: {
+    href: string;
+    text: string;
+  };
 }
 
 const STEPS: Step[] = [
@@ -23,6 +28,10 @@ const STEPS: Step[] = [
     description:
       "To interact with the platform you need a Stellar wallet. We recommend Freighter — a free browser extension that keeps your keys safe and lets you sign transactions with a single click.",
     tip: 'Search "Freighter" in your browser\'s extension store, or visit freighter.app.',
+    link: {
+      href: "/help",
+      text: "Read our Account Recovery & Key Management Guide",
+    },
   },
   {
     title: "Connect Your Wallet",
@@ -124,6 +133,13 @@ export default function OnboardingWizard({ forceOpen = false, onClose }: Onboard
             <div className="mt-4 rounded-md bg-blue-50 px-4 py-3 text-sm text-blue-800">
               <span className="font-semibold">Tip: </span>
               {current.tip}
+              {current.link && (
+                <div className="mt-2 font-medium">
+                  <Link href={current.link.href} className="underline hover:text-blue-950">
+                    {current.link.text} &rarr;
+                  </Link>
+                </div>
+              )}
             </div>
           )}
 

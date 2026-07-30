@@ -134,5 +134,22 @@
     "generic": "Algo salió mal",
     "notFound": "Página no encontrada",
     "unauthorized": "No autorizado"
+  },
+  "settings": {
+    "typography": {
+      "sectionTitle": "Tipografía",
+      "sectionDescription": "Ajusta el tamaño del texto y el espaciado para mejorar la legibilidad.",
+      "fontSize": "Tamaño de fuente",
+      "fontSizeSmall": "Pequeño (14px)",
+      "fontSizeMedium": "Mediano (16px) — predeterminado",
+      "fontSizeLarge": "Grande (18px)",
+      "fontSizeXLarge": "Extra grande (20px)",
+      "lineSpacing": "Espaciado de línea",
+      "lineSpacingCompact": "Compacto (1.4×)",
+      "lineSpacingNormal": "Normal (1.6×) — predeterminado",
+      "lineSpacingRelaxed": "Relajado (1.8×)",
+      "resetDefaults": "Restablecer valores predeterminados",
+      "previewLabel": "Vista previa de tipografía"
+    }
   }
 }
