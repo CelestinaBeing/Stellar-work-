@@ -24,6 +24,7 @@ import { getExplorerTxUrl } from "@/lib/stellar";
 import { isConfirmSuppressed, CONFIRM_KEYS } from "@/lib/confirm-prefs";
 import type { Job } from "@/lib/types";
 import { useWallet } from "@/lib/wallet-context";
+import { useMeetings } from "@/lib/meetings-context";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -92,6 +93,12 @@ export default function JobDetailPage() {
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [bookmarkAnimating, setBookmarkAnimating] = useState(false);
   const [statusAnnouncement, setStatusAnnouncement] = useState("");
+  const { proposeMeeting, getMeetingsForJob } = useMeetings();
+  const [showScheduleForm, setShowScheduleForm] = useState(false);
+  const [meetingTitle, setMeetingTitle] = useState("");
+  const [slotDate, setSlotDate] = useState("");
+  const [slotStart, setSlotStart] = useState("");
+  const [slotEnd, setSlotEnd] = useState("");
 
   const numericId = Number(id);
   const isIdValid = !isNaN(numericId) && numericId > 0 && Number.isInteger(numericId);
@@ -601,11 +608,10 @@ export default function JobDetailPage() {
           const otherParty =
             wallet === job.client ? job.freelancer :
             wallet === job.freelancer ? job.client :
-            // Visitor: can message the client
             job.client;
           if (!otherParty || otherParty === wallet) return null;
           return (
-            <div className="pt-1">
+            <div className="flex flex-wrap gap-2 pt-1">
               <Link
                 href={`/messages/${otherParty}`}
                 className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
@@ -615,6 +621,120 @@ export default function JobDetailPage() {
                 </svg>
                 Message {wallet === job.client ? "Freelancer" : wallet === job.freelancer ? "Client" : "Client"}
               </Link>
+              <button
+                type="button"
+                onClick={() => setShowScheduleForm(!showScheduleForm)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
+                </svg>
+                {showScheduleForm ? "Cancel" : "Schedule Meeting"}
+              </button>
+            </div>
+          );
+        })()}
+
+        {/* Schedule meeting form */}
+        {showScheduleForm && wallet && (() => {
+          const otherParty =
+            wallet === job.client ? job.freelancer :
+            wallet === job.freelancer ? job.client :
+            job.client;
+          if (!otherParty) return null;
+          return (
+            <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm">
+              <h4 className="font-medium text-slate-800 mb-3">Propose a Meeting</h4>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Meeting title</label>
+                  <input
+                    type="text"
+                    value={meetingTitle}
+                    onChange={(e) => setMeetingTitle(e.target.value)}
+                    placeholder="e.g. Project kickoff call"
+                    className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Date</label>
+                    <input
+                      type="date"
+                      value={slotDate}
+                      onChange={(e) => setSlotDate(e.target.value)}
+                      className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Start time</label>
+                    <input
+                      type="time"
+                      value={slotStart}
+                      onChange={(e) => setSlotStart(e.target.value)}
+                      className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">End time</label>
+                    <input
+                      type="time"
+                      value={slotEnd}
+                      onChange={(e) => setSlotEnd(e.target.value)}
+                      className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={!meetingTitle || !slotDate || !slotStart || !slotEnd}
+                  onClick={() => {
+                    const start = `${slotDate}T${slotStart}:00`;
+                    const end = `${slotDate}T${slotEnd}:00`;
+                    proposeMeeting(
+                      numericId,
+                      meetingTitle,
+                      [{ start, end }],
+                      wallet,
+                      otherParty,
+                    );
+                    setMeetingTitle("");
+                    setSlotDate("");
+                    setSlotStart("");
+                    setSlotEnd("");
+                    setShowScheduleForm(false);
+                  }}
+                  className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Send Proposal
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Show existing meetings for this job */}
+        {wallet && (() => {
+          const jobMeetings = getMeetingsForJob(numericId);
+          if (jobMeetings.length === 0) return null;
+          return (
+            <div className="mt-3 space-y-2">
+              <h4 className="text-xs font-medium text-slate-600 uppercase tracking-wider">Meetings</h4>
+              {jobMeetings.map((m) => (
+                <div key={m.id} className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-3 py-2 text-xs">
+                  <div>
+                    <span className="font-medium text-slate-800">{m.title}</span>
+                    <span className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                      m.status === "confirmed" ? "bg-green-100 text-green-700" :
+                      m.status === "pending" ? "bg-amber-100 text-amber-700" :
+                      "bg-slate-100 text-slate-500"
+                    }`}>
+                      {m.status}
+                    </span>
+                  </div>
+                  <Link href="/meetings" className="text-blue-600 hover:underline">View</Link>
+                </div>
+              ))}
             </div>
           );
         })()}

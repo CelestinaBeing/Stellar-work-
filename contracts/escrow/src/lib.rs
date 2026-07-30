@@ -4,6 +4,7 @@ use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Bytes, B
 const CANCELLATION_GRACE_PERIOD: u64 = 100;
 const PLATFORM_FEE_BPS: u64 = 250;
 const MAX_DESC_PAYLOAD: u32 = 8192;
+const SLA_PENALTY_DENOMINATOR: u64 = 10_000;
 const MAX_REVISION_COUNT: u32 = 5;
 
 fn current_ledger(env: &Env) -> u64 {
@@ -259,6 +260,9 @@ pub enum DataKey {
     DescPayloadMax,
     MilestoneCount(u64),
     Milestone(u64, u32),
+    SLAConfig(u64),
+    SLAAcceptedAt(u64),
+    SLABreachPenalty(u64),
 }
 
 fn require_admin(env: &Env) -> Address {
@@ -364,6 +368,24 @@ fn get_job(env: &Env, job_id: u64) -> Job {
 fn put_job(env: &Env, job_id: u64, job: &Job) {
     env.storage().persistent().set(&DataKey::Job(job_id), job);
     env.storage().persistent().extend_ttl(&DataKey::Job(job_id), 10000, 10000);
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SLAConfig {
+    pub response_time_ledgers: u64,
+    pub delivery_time_ledgers: u64,
+    pub penalty_bps: u64,
+    pub auto_escalate: bool,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SLAStatus {
+    pub config: Option<SLAConfig>,
+    pub accepted_at: u64,
+    pub breached: bool,
+    pub penalty_applied: bool,
 }
 
 #[contract]
@@ -529,6 +551,43 @@ impl Escrow {
         count
     }
 
+    pub fn post_job_with_sla(
+        env: Env,
+        client: Address,
+        amount: i128,
+        desc_hash: BytesN<32>,
+        description_payload_len: u32,
+        deadline: u64,
+        token_address: Address,
+        sla_config: SLAConfig,
+    ) -> u64 {
+        let job_id = Self::post_job(
+            env.clone(),
+            client,
+            amount,
+            desc_hash,
+            description_payload_len,
+            deadline,
+            token_address,
+        );
+        env.storage().persistent().set(&DataKey::SLAConfig(job_id), &sla_config);
+        env.storage().persistent().set(&DataKey::SLAAcceptedAt(job_id), &0u64);
+        env.storage().persistent().set(&DataKey::SLABreachPenalty(job_id), &0i128);
+        job_id
+    }
+
+    pub fn get_sla_status(env: Env, job_id: u64) -> SLAStatus {
+        let config: Option<SLAConfig> = env.storage().persistent().get(&DataKey::SLAConfig(job_id));
+        let accepted_at: u64 = env.storage().persistent().get(&DataKey::SLAAcceptedAt(job_id)).unwrap_or(0);
+        let penalty: i128 = env.storage().persistent().get(&DataKey::SLABreachPenalty(job_id)).unwrap_or(0);
+        SLAStatus {
+            config,
+            accepted_at,
+            breached: penalty > 0,
+            penalty_applied: penalty > 0,
+        }
+    }
+
     pub fn accept_job(env: Env, freelancer: Address, job_id: u64) {
         freelancer.require_auth();
         check_access(&env, &freelancer);
@@ -537,6 +596,7 @@ impl Escrow {
         if current_ledger(&env) > job.deadline { panic!("deadline passed"); }
         job.freelancer = Some(freelancer);
         job.status = JobStatus::InProgress;
+        env.storage().persistent().set(&DataKey::SLAAcceptedAt(job_id), &current_ledger(&env));
         put_job(&env, job_id, &job);
     }
 
@@ -548,6 +608,22 @@ impl Escrow {
         if job.revision_count >= MAX_REVISION_COUNT { panic!("revision limit reached"); }
         job.status = JobStatus::SubmittedForReview;
         job.revision_count += 1;
+
+        if let Some(sla) = env.storage().persistent().get::<_, SLAConfig>(&DataKey::SLAConfig(job_id)) {
+            let accepted_at: u64 = env.storage().persistent().get(&DataKey::SLAAcceptedAt(job_id)).unwrap_or(0);
+            if accepted_at > 0 {
+                let elapsed = current_ledger(&env).saturating_sub(accepted_at);
+                if elapsed > sla.delivery_time_ledgers && sla.penalty_bps > 0 {
+                    let penalty = job.amount * sla.penalty_bps as i128 / SLA_PENALTY_DENOMINATOR as i128;
+                    env.storage().persistent().set(&DataKey::SLABreachPenalty(job_id), &penalty);
+                    env.events().publish(
+                        (Symbol::new(&env, "SLA_breach"),),
+                        (job_id, job.freelancer.clone(), penalty, sla.auto_escalate),
+                    );
+                }
+            }
+        }
+
         put_job(&env, job_id, &job);
     }
 
@@ -558,6 +634,14 @@ impl Escrow {
         if job.status != JobStatus::SubmittedForReview { panic!("job not submitted"); }
         let fee = job.amount * PLATFORM_FEE_BPS as i128 / 10000;
         let payout = job.amount - fee;
+
+        let sla_penalty: i128 = env.storage().persistent().get(&DataKey::SLABreachPenalty(job_id)).unwrap_or(0);
+        let payout = if sla_penalty > 0 {
+            let penalty = sla_penalty.min(payout);
+            job.amount - fee - penalty
+        } else {
+            payout
+        };
 
         let mut fees: Fees = env.storage().instance().get(&DataKey::Fees).unwrap_or(Fees { total_collected: 0 });
         fees.total_collected += fee;

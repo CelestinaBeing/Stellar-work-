@@ -282,3 +282,128 @@ fn test_trusted_forwarder() {
     escrow.relay_cancel_job(&forwarder, &client, &job_id);
     assert_eq!(escrow.get_job(&job_id).status, JobStatus::Cancelled);
 }
+
+#[test]
+fn test_sla_config_creation() {
+    let env = Env::default();
+    let (admin, client, _freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let deadline: u64 = 1000;
+    let amount: i128 = 100_0000000;
+
+    let sla_config = SLAConfig {
+        response_time_ledgers: 10,
+        delivery_time_ledgers: 50,
+        penalty_bps: 500,
+        auto_escalate: true,
+    };
+
+    let job_id = escrow.post_job_with_sla(&client, &amount, &desc_hash, &100u32, &deadline, &token, &sla_config);
+    assert_eq!(job_id, 1);
+
+    let status = escrow.get_sla_status(&job_id);
+    assert_eq!(status.config, Some(sla_config));
+    assert_eq!(status.accepted_at, 0);
+    assert!(!status.breached);
+    assert!(!status.penalty_applied);
+}
+
+#[test]
+fn test_sla_get_sla_status_returns_correct_values() {
+    let env = Env::default();
+    let (admin, client, freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let deadline: u64 = 1000;
+    let amount: i128 = 100_0000000;
+
+    let sla_config = SLAConfig {
+        response_time_ledgers: 10,
+        delivery_time_ledgers: 20,
+        penalty_bps: 500,
+        auto_escalate: false,
+    };
+
+    let job_id = escrow.post_job_with_sla(&client, &amount, &desc_hash, &100u32, &deadline, &token, &sla_config);
+    let status_before = escrow.get_sla_status(&job_id);
+    assert_eq!(status_before.accepted_at, 0);
+
+    escrow.accept_job(&freelancer, &job_id);
+    let status_after_accept = escrow.get_sla_status(&job_id);
+    assert!(status_after_accept.accepted_at > 0);
+    assert_eq!(status_after_accept.config, Some(sla_config));
+    assert!(!status_after_accept.breached);
+
+    let current = env.ledger().sequence();
+    env.ledger().set_sequence_number(current + 30);
+
+    escrow.submit_work(&freelancer, &job_id);
+    let status_after_submit = escrow.get_sla_status(&job_id);
+    assert!(status_after_submit.breached);
+    assert!(status_after_submit.penalty_applied);
+}
+
+#[test]
+fn test_sla_penalty_applied_on_late_delivery() {
+    let env = Env::default();
+    let (admin, client, freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let deadline: u64 = 1000;
+    let amount: i128 = 100_0000000;
+
+    let sla_config = SLAConfig {
+        response_time_ledgers: 10,
+        delivery_time_ledgers: 20,
+        penalty_bps: 500,
+        auto_escalate: true,
+    };
+
+    let job_id = escrow.post_job_with_sla(&client, &amount, &desc_hash, &100u32, &deadline, &token, &sla_config);
+    escrow.accept_job(&freelancer, &job_id);
+
+    let current = env.ledger().sequence();
+    env.ledger().set_sequence_number(current + 30);
+
+    escrow.submit_work(&freelancer, &job_id);
+
+    let token_client = token::Client::new(&env, &token);
+    let pre_balance = token_client.balance(&freelancer);
+    escrow.approve_work(&client, &job_id);
+    let post_balance = token_client.balance(&freelancer);
+
+    let fee = amount * PLATFORM_FEE_BPS as i128 / 10000;
+    let sla_penalty = amount * sla_config.penalty_bps as i128 / SLA_PENALTY_DENOMINATOR as i128;
+    let expected_payout = amount - fee - sla_penalty;
+    assert_eq!(post_balance - pre_balance, expected_payout);
+}
+
+#[test]
+fn test_sla_breach_event_emitted() {
+    let env = Env::default();
+    let (admin, client, freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let deadline: u64 = 1000;
+    let amount: i128 = 100_0000000;
+
+    let sla_config = SLAConfig {
+        response_time_ledgers: 10,
+        delivery_time_ledgers: 20,
+        penalty_bps: 500,
+        auto_escalate: true,
+    };
+
+    let job_id = escrow.post_job_with_sla(&client, &amount, &desc_hash, &100u32, &deadline, &token, &sla_config);
+    escrow.accept_job(&freelancer, &job_id);
+
+    let current = env.ledger().sequence();
+    env.ledger().set_sequence_number(current + 30);
+
+    let pre_events = env.events().all().len();
+    escrow.submit_work(&freelancer, &job_id);
+    let post_events = env.events().all().len();
+
+    assert!(post_events > pre_events, "SLA breach should emit an event");
+}

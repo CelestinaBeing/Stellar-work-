@@ -142,6 +142,7 @@ export const Navigation = memo(function Navigation() {
     { href: "/", label: "Jobs" },
     { href: "/post-job", label: "Post Job", shortcut: "n" },
     { href: "/dashboard", label: "Dashboard" },
+    { href: "/meetings", label: "Meetings" },
     { href: "/transactions", label: "Transactions" },
     { href: "/disputes", label: "Disputes" },
     { href: "/messages", label: "Messages" },
