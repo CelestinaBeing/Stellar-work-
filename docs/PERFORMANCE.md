@@ -18,6 +18,7 @@
 ### Batching Strategies
 
 - Use `get_jobs_batch(start, limit)` for paginated reads instead of individual `get_job` calls.
+- Tracked in PERF-01: combine related storage reads (job + status) where callers hit the same keys repeatedly.
 - `batch_resolve_disputes` processes up to 20 disputes in a single admin call, reducing per-job overhead.
 - For multi-item operations (fee tiers, milestones), prefer single storage entries over per-item keys.
 
