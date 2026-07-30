@@ -267,6 +267,17 @@ pub enum DataKey {
     UserAttestations(Address),
     JobVisibility(u64),
     InvitedFreelancer(u64, Address),
+    ReentrancyLock,
+}
+
+fn enter_reentrancy_guard(env: &Env) {
+    let locked: bool = env.storage().instance().get(&DataKey::ReentrancyLock).unwrap_or(false);
+    if locked { panic!("reentrant call"); }
+    env.storage().instance().set(&DataKey::ReentrancyLock, &true);
+}
+
+fn exit_reentrancy_guard(env: &Env) {
+    env.storage().instance().set(&DataKey::ReentrancyLock, &false);
 }
 
 fn require_admin(env: &Env) -> Address {
@@ -657,6 +668,7 @@ impl Escrow {
         let mut job = get_job(&env, job_id);
         if job.client != client { panic!("not authorized"); }
         if job.status != JobStatus::SubmittedForReview { panic!("job not submitted"); }
+        enter_reentrancy_guard(&env);
         let fee = job.amount * PLATFORM_FEE_BPS as i128 / 10000;
         let payout = job.amount - fee;
 
@@ -676,6 +688,7 @@ impl Escrow {
         if let Some(freelancer) = &job.freelancer {
             token.transfer(&env.current_contract_address(), freelancer, &payout);
         }
+        exit_reentrancy_guard(&env);
         job.status = JobStatus::Completed;
         put_job(&env, job_id, &job);
 
@@ -689,8 +702,10 @@ impl Escrow {
         let mut job = get_job(&env, job_id);
         if job.client != client { panic!("not authorized"); }
         if job.status != JobStatus::Open { panic!("job not open"); }
+        enter_reentrancy_guard(&env);
         let token = token::Client::new(&env, &job.token);
         token.transfer(&env.current_contract_address(), &client, &job.amount);
+        exit_reentrancy_guard(&env);
         job.status = JobStatus::Cancelled;
         put_job(&env, job_id, &job);
     }
@@ -747,8 +762,10 @@ impl Escrow {
         let ledger = current_ledger(&env);
         if ledger <= job.deadline { panic!("deadline not passed"); }
         if job.status != JobStatus::InProgress && job.status != JobStatus::Open { panic!("job not active"); }
+        enter_reentrancy_guard(&env);
         let token = token::Client::new(&env, &job.token);
         token.transfer(&env.current_contract_address(), &job.client, &job.amount);
+        exit_reentrancy_guard(&env);
         job.status = JobStatus::Cancelled;
         put_job(&env, job_id, &job);
     }
@@ -777,6 +794,7 @@ impl Escrow {
         require_admin(&env);
         let mut job = get_job(&env, job_id);
         if job.status != JobStatus::Disputed { panic!("job not disputed"); }
+        enter_reentrancy_guard(&env);
         let fee = job.amount * PLATFORM_FEE_BPS as i128 / 10000;
         let payout = job.amount - fee;
         let mut fees: Fees = env.storage().instance().get(&DataKey::Fees).unwrap_or(Fees { total_collected: 0 });
@@ -785,6 +803,7 @@ impl Escrow {
 
         let token = token::Client::new(&env, &job.token);
         token.transfer(&env.current_contract_address(), &winner, &payout);
+        exit_reentrancy_guard(&env);
         job.status = JobStatus::Completed;
         put_job(&env, job_id, &job);
         desc_hash: Bytes,
@@ -1290,10 +1309,12 @@ impl Escrow {
         require_admin(&env);
         let mut fees: Fees = env.storage().instance().get(&DataKey::Fees).unwrap_or(Fees { total_collected: 0 });
         if amount > fees.total_collected { panic!("insufficient fees"); }
+        enter_reentrancy_guard(&env);
         fees.total_collected -= amount;
         env.storage().instance().set(&DataKey::Fees, &fees);
         let token = token::Client::new(&env, &token_addr);
         token.transfer(&env.current_contract_address(), &admin, &amount);
+        exit_reentrancy_guard(&env);
     }
 
     pub fn add_allowed_token(env: Env, admin: Address, token_addr: Address) {
