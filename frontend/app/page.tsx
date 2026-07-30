@@ -892,7 +892,7 @@ export default function HomePage() {
                     </label>
                   </div>
                   <Link href={`/job/${id}`} className="block" onClick={() => markJobViewed(id)}>
-                    <h2 className="flex items-center gap-2 text-lg font-medium hover:underline">
+                    <h3 className="flex items-center gap-2 text-lg font-medium hover:underline">
                       Job #{id}
                       {newJobIds.has(id) && (
                         <span
@@ -902,7 +902,7 @@ export default function HomePage() {
                           New
                         </span>
                       )}
-                    </h2>
+                    </h3>
                   </Link>
                   <p
                     className="mt-2 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm font-bold tabular-nums text-slate-700"

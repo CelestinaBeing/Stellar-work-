@@ -393,7 +393,7 @@ function DisputeCard({
             <span className="text-xs text-slate-400">·</span>
             <span className="text-xs text-slate-500">Raised by {dispute.raisedBy}</span>
           </div>
-          <h3 className="text-sm font-semibold text-slate-900 truncate">{dispute.jobTitle}</h3>
+          <h2 className="text-sm font-semibold text-slate-900 truncate">{dispute.jobTitle}</h2>
           <div className="flex items-center gap-3 mt-1.5">
             <span className="text-xs text-slate-500">{dispute.client} <span className="text-slate-300">vs</span> {dispute.freelancer}</span>
           </div>

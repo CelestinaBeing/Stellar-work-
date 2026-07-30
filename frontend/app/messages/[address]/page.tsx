@@ -365,6 +365,7 @@ export default function ConversationPage() {
         <Link href="/messages" className="text-sm text-blue-600 hover:underline">
           ← Back to Messages
         </Link>
+        <h1 className="text-2xl font-semibold">Messages</h1>
         <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
           Invalid Stellar address in the URL.
         </p>
@@ -380,6 +381,7 @@ export default function ConversationPage() {
         <Link href="/messages" className="text-sm text-blue-600 hover:underline">
           ← Back to Messages
         </Link>
+        <h1 className="text-2xl font-semibold">Messages</h1>
         <div className="flex flex-col items-center justify-center rounded-xl border border-slate-200 bg-white py-16 text-center">
           <p className="text-sm text-slate-600">Connect your wallet to send and receive messages.</p>
           <button
@@ -419,13 +421,15 @@ export default function ConversationPage() {
         </div>
 
         <div className="min-w-0 flex-1">
-          <Link
-            href={`/profile/${peerAddress}`}
-            className="block truncate font-mono text-sm font-semibold text-slate-900 hover:underline"
-            title={peerAddress}
-          >
-            {shortAddr(peerAddress)}
-          </Link>
+          <h1 className="truncate font-mono text-sm font-semibold text-slate-900">
+            <Link
+              href={`/profile/${peerAddress}`}
+              className="hover:underline"
+              title={peerAddress}
+            >
+              {shortAddr(peerAddress)}
+            </Link>
+          </h1>
           <p className="truncate text-[10px] text-slate-400">{peerAddress}</p>
         </div>
 

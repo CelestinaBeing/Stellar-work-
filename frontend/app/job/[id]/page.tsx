@@ -495,7 +495,7 @@ export default function JobDetailPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
               <div>
-                <h4 className="font-semibold">{isClient ? "Action Required: Review Submitted Work" : "Work Under Review"}</h4>
+                <h2 className="font-semibold">{isClient ? "Action Required: Review Submitted Work" : "Work Under Review"}</h2>
                 <p className="mt-1 text-xs opacity-90">{countdown.text}</p>
               </div>
             </div>
@@ -644,7 +644,7 @@ export default function JobDetailPage() {
           if (!otherParty) return null;
           return (
             <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm">
-              <h4 className="font-medium text-slate-800 mb-3">Propose a Meeting</h4>
+              <h2 className="font-medium text-slate-800 mb-3">Propose a Meeting</h2>
               <div className="space-y-3">
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">Meeting title</label>
@@ -719,7 +719,7 @@ export default function JobDetailPage() {
           if (jobMeetings.length === 0) return null;
           return (
             <div className="mt-3 space-y-2">
-              <h4 className="text-xs font-medium text-slate-600 uppercase tracking-wider">Meetings</h4>
+              <h2 className="text-xs font-medium text-slate-600 uppercase tracking-wider">Meetings</h2>
               {jobMeetings.map((m) => (
                 <div key={m.id} className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-3 py-2 text-xs">
                   <div>
