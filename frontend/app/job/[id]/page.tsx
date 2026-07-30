@@ -31,6 +31,46 @@ type PendingAction = "cancelJob" | "approveWork" | "submitWork" | "freelancerCan
 
 const BOOKMARK_STORAGE_KEY = "stellarwork:bookmarked-jobs";
 
+function getAutoApprovalCountdown(submittedAtStr: string | undefined) {
+  if (!submittedAtStr) return null;
+  const submittedAtNum = Number(submittedAtStr);
+  if (!submittedAtNum || isNaN(submittedAtNum)) return null;
+
+  const APPROVAL_WINDOW = 14 * 24 * 60 * 60; // 14 days in seconds
+  const autoApproveTime = (submittedAtNum + APPROVAL_WINDOW) * 1000;
+  const now = Date.now();
+  const diff = autoApproveTime - now;
+
+  if (diff <= 0) {
+    return {
+      expired: true,
+      text: "The 14-day approval window has expired. Payment can now be automatically released to the freelancer.",
+    };
+  }
+
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+  let timeStr = "";
+  if (days > 0) {
+    timeStr += `${days} day${days > 1 ? "s" : ""}`;
+  }
+  if (hours > 0) {
+    if (timeStr) timeStr += ", ";
+    timeStr += `${hours} hour${hours > 1 ? "s" : ""}`;
+  }
+  if (days === 0 && minutes > 0) {
+    if (timeStr) timeStr += ", ";
+    timeStr += `${minutes} minute${minutes > 1 ? "s" : ""}`;
+  }
+
+  return {
+    expired: false,
+    text: `Payment will be automatically released to the freelancer in ${timeStr} if you do not take action.`,
+  };
+}
+
 export default function JobDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -51,6 +91,7 @@ export default function JobDetailPage() {
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [bookmarkAnimating, setBookmarkAnimating] = useState(false);
+  const [statusAnnouncement, setStatusAnnouncement] = useState("");
 
   const numericId = Number(id);
   const isIdValid = !isNaN(numericId) && numericId > 0 && Number.isInteger(numericId);
@@ -178,6 +219,7 @@ export default function JobDetailPage() {
       }
       await load();
       showSuccess(successMessage);
+      setStatusAnnouncement(successMessage);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Transaction failed.";
       setError(message);
@@ -401,6 +443,11 @@ export default function JobDetailPage() {
 
   return (
     <section className="space-y-6 pb-6 sm:pb-6">
+      {/* Screen reader announcer for job status transitions */}
+      <p role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {statusAnnouncement}
+      </p>
+
       <div className="flex items-center gap-4">
         <Link href="/" className="text-sm text-blue-600 hover:underline">
           Back
@@ -409,7 +456,7 @@ export default function JobDetailPage() {
       </div>
 
       {error && (
-        <p role="alert" className="rounded-md bg-red-100 p-3 text-sm text-red-700">
+        <p role="alert" aria-live="assertive" aria-atomic="true" className="rounded-md bg-red-100 p-3 text-sm text-red-700">
           {error}
         </p>
       )}
@@ -426,6 +473,28 @@ export default function JobDetailPage() {
           </a>
         </p>
       )}
+
+      {job.status === "SubmittedForReview" && (() => {
+        const countdown = getAutoApprovalCountdown(job.submitted_at);
+        if (!countdown) return null;
+        return (
+          <div className={`rounded-lg border p-4 text-sm ${
+            countdown.expired
+              ? "border-red-200 bg-red-50 text-red-800"
+              : "border-amber-200 bg-amber-50 text-amber-800"
+          }`}>
+            <div className="flex items-start gap-3">
+              <svg className="h-5 w-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <div>
+                <h4 className="font-semibold">{isClient ? "Action Required: Review Submitted Work" : "Work Under Review"}</h4>
+                <p className="mt-1 text-xs opacity-90">{countdown.text}</p>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       <article className="space-y-2 rounded-lg border border-slate-200 bg-white p-5 text-sm">
         <div className="flex items-center justify-between gap-2">
