@@ -27,6 +27,7 @@ const NOTIFICATION_EVENTS: NotificationEvent[] = [
 
 const PROFILE_VISIBILITY_KEY = "stellarwork:settings:profile_visible";
 const SHOW_EMAIL_KEY = "stellarwork:settings:show_email";
+const READ_RECEIPTS_KEY = "stellarwork:settings:read_receipts";
 
 function readBool(key: string, defaultValue: boolean): boolean {
   if (typeof window === "undefined") return defaultValue;
@@ -114,11 +115,13 @@ export default function SettingsClient() {
   const [currency, setCurrency] = useState<FiatCurrency>("USD");
   const [profileVisible, setProfileVisible] = useState(true);
   const [showEmail, setShowEmail] = useState(false);
+  const [readReceipts, setReadReceipts] = useState(true);
 
   useEffect(() => {
     setCurrency(getPreferredFiatCurrency());
     setProfileVisible(readBool(PROFILE_VISIBILITY_KEY, true));
     setShowEmail(readBool(SHOW_EMAIL_KEY, false));
+    setReadReceipts(readBool(READ_RECEIPTS_KEY, true));
   }, []);
 
   const handleCurrencyChange = useCallback((c: FiatCurrency) => {
@@ -136,6 +139,11 @@ export default function SettingsClient() {
     localStorage.setItem(SHOW_EMAIL_KEY, String(v));
   }, []);
 
+  const handleReadReceipts = useCallback((v: boolean) => {
+    setReadReceipts(v);
+    localStorage.setItem(READ_RECEIPTS_KEY, String(v));
+  }, []);
+
   const resetDisplay = useCallback(() => {
     setTheme("system");
     handleCurrencyChange("USD");
@@ -150,7 +158,8 @@ export default function SettingsClient() {
   const resetPrivacy = useCallback(() => {
     handleProfileVisible(true);
     handleShowEmail(false);
-  }, [handleProfileVisible, handleShowEmail]);
+    handleReadReceipts(true);
+  }, [handleProfileVisible, handleShowEmail, handleReadReceipts]);
 
   return (
     <div className="mx-auto max-w-2xl space-y-6 py-2">
@@ -257,6 +266,13 @@ export default function SettingsClient() {
           onChange={handleShowEmail}
           label="Show email on profile"
           description="Display your email address on your public profile page."
+        />
+        <Toggle
+          id="privacy-read-receipts"
+          checked={readReceipts}
+          onChange={handleReadReceipts}
+          label="Read receipts"
+          description="Let others see when you've read their messages."
         />
         <button
           type="button"
