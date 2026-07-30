@@ -5,6 +5,7 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/your-org/Stellar-work-/ci.yml?label=ci&logo=github)](https://github.com/your-org/Stellar-work-/actions/workflows/ci.yml)
 [![Frontend CI](https://img.shields.io/github/actions/workflow/status/your-org/Stellar-work-/frontend.yml?label=frontend+ci&logo=github)](https://github.com/your-org/Stellar-work-/actions/workflows/frontend.yml)
 [![Contract CI](https://img.shields.io/github/actions/workflow/status/your-org/Stellar-work-/contract.yml?label=contract+ci&logo=rust)](https://github.com/your-org/Stellar-work-/actions/workflows/contract.yml)
+[![Lighthouse](https://img.shields.io/badge/performance-≥90-brightgreen?logo=lighthouse&label=lighthouse)](https://github.com/your-org/Stellar-work-/actions/workflows/lighthouse.yml)
 [![Code Coverage](https://img.shields.io/codecov/c/github/your-org/Stellar-work-?logo=codecov)](https://codecov.io/gh/your-org/Stellar-work-)
 
 StellarWork is an open-source decentralized freelance marketplace on Stellar. Payments are held in Soroban escrow and released by state transitions, not platform custody logic.
