@@ -8679,3 +8679,6 @@ mod test {
         assert!(!client.is_job_visible_to(&job_id, &freelancer));
     }
 }
+
+#[cfg(test)]
+mod benchmarks;
