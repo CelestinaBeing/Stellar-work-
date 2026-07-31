@@ -201,6 +201,19 @@ pub struct SLAStatus {
     pub penalty_applied: bool,
 }
 
+/// Aggregated job counts organised by status.  Returned by `get_job_status_counts`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JobStatusCounts {
+    pub open: u64,
+    pub in_progress: u64,
+    pub submitted_for_review: u64,
+    pub completed: u64,
+    pub cancelled: u64,
+    pub disputed: u64,
+    pub total: u64,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Attestation {
@@ -903,6 +916,51 @@ impl EscrowContract {
             .instance()
             .get(&DataKey::CompletedJobsCount)
             .unwrap_or(0)
+    }
+
+    /// Return counts of jobs in each status plus a total, in a single call.
+    ///
+    /// NOTE: this iterates over every job so callers should be mindful of
+    /// Soroban transaction limits.  A future gas-optimised version could
+    /// increment/decrement persistent counters on each state transition for
+    /// O(1) reads.
+    ///
+    /// The `total` field is computed as the sum of individually-counted
+    /// statuses rather than reusing `JobCount` to account for any jobs
+    /// whose storage may have TTL-expired.
+    pub fn get_job_status_counts(env: Env) -> JobStatusCounts {
+        let count: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::JobCount)
+            .unwrap_or(0);
+        let mut open: u64 = 0;
+        let mut in_progress: u64 = 0;
+        let mut submitted_for_review: u64 = 0;
+        let mut completed: u64 = 0;
+        let mut cancelled: u64 = 0;
+        let mut disputed: u64 = 0;
+        for i in 1..=count {
+            if let Some(job) = env.storage().persistent().get::<_, Job>(&DataKey::Job(i)) {
+                match job.status {
+                    JobStatus::Open => open += 1,
+                    JobStatus::InProgress => in_progress += 1,
+                    JobStatus::SubmittedForReview => submitted_for_review += 1,
+                    JobStatus::Completed => completed += 1,
+                    JobStatus::Cancelled => cancelled += 1,
+                    JobStatus::Disputed => disputed += 1,
+                }
+            }
+        }
+        JobStatusCounts {
+            open,
+            in_progress,
+            submitted_for_review,
+            completed,
+            cancelled,
+            disputed,
+            total: open + in_progress + submitted_for_review + completed + cancelled + disputed,
+        }
     }
 
     pub fn get_fees(env: Env) -> i128 {

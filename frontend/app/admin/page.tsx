@@ -6,6 +6,7 @@ import {
   withdrawFees,
   adminGetAllJobs,
   adminGetJobCount,
+  getJobStatusCounts,
   setWhitelistMode,
   addToBlacklist,
   removeFromBlacklist,
@@ -21,7 +22,8 @@ import SectionCard from "@/components/SectionCard";
 import { formatDeadline, toXlm } from "@/lib/format";
 import { isConfirmSuppressed, CONFIRM_KEYS } from "@/lib/confirm-prefs";
 import { useWallet } from "@/lib/wallet-context";
-import type { Job, JobStatus } from "@/lib/types";
+import type { Job, JobStatus, JobStatusCounts } from "@/lib/types";
+import { STATUS_TO_COUNTS_KEY } from "@/lib/types";
 import { useEffect, useState, useCallback } from "react";
 import { ANNOUNCEMENT_STORAGE_KEY, type AnnouncementConfig } from "@/components/AnnouncementBanner";
 
@@ -49,6 +51,15 @@ export default function AdminPage() {
   const [fees, setFees] = useState<bigint>(0n);
   const [nativeToken, setNativeToken] = useState<string>("");
   const [jobs, setJobs] = useState<Array<{ id: number; job: Job }>>([]);
+  const [statusCounts, setStatusCounts] = useState<JobStatusCounts>({
+    open: 0,
+    in_progress: 0,
+    submitted_for_review: 0,
+    completed: 0,
+    cancelled: 0,
+    disputed: 0,
+    total: 0,
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [withdrawing, setWithdrawing] = useState(false);
@@ -91,6 +102,28 @@ export default function AdminPage() {
       const jobsList = await adminGetAllJobs(actualAdmin, 0, count);
       const fetched = jobsList.map((job, idx) => ({ id: idx + 1, job }));
       setJobs(fetched);
+
+      // Fetch status counts in a single contract call instead of
+      // iterating all jobs client-side.
+      try {
+        const counts = await getJobStatusCounts();
+        setStatusCounts(counts);
+      } catch {
+        // Fallback to client-side computation if contract call fails
+        const fallback = fetched.reduce<Record<string, number>>((acc, { job }) => {
+          acc[job.status] = (acc[job.status] || 0) + 1;
+          return acc;
+        }, {});
+        setStatusCounts({
+          open: fallback["Open"] || 0,
+          in_progress: fallback["InProgress"] || 0,
+          submitted_for_review: fallback["SubmittedForReview"] || 0,
+          completed: fallback["Completed"] || 0,
+          cancelled: fallback["Cancelled"] || 0,
+          disputed: fallback["Disputed"] || 0,
+          total: fetched.length,
+        });
+      }
 
       const whitelistMode = await isWhitelistModeEnabled();
       setIsWhitelistMode(whitelistMode);
@@ -139,6 +172,7 @@ export default function AdminPage() {
       setIsAdmin(null);
       setFees(0n);
       setJobs([]);
+      setStatusCounts({ open: 0, in_progress: 0, submitted_for_review: 0, completed: 0, cancelled: 0, disputed: 0, total: 0 });
       setError(null);
       setSuccessMessage(null);
     }
@@ -273,10 +307,7 @@ export default function AdminPage() {
     );
   }
 
-  const statusCounts = jobs.reduce<Record<string, number>>((acc, { job }) => {
-    acc[job.status] = (acc[job.status] || 0) + 1;
-    return acc;
-  }, {});
+  const statusTotal = statusCounts.total || jobs.length;
 
   return (
     <section className="space-y-6">
@@ -512,18 +543,22 @@ export default function AdminPage() {
       <SectionCard title="Job Overview">
         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
           <div className="rounded-md border border-slate-200 p-3 text-center">
-            <p className="text-2xl font-bold">{jobs.length}</p>
+            <p className="text-2xl font-bold">{statusTotal}</p>
             <p className="text-xs text-slate-500">Total</p>
           </div>
-          {(Object.keys(STATUS_LABELS) as JobStatus[]).map((status) => (
+          {(Object.keys(STATUS_LABELS) as JobStatus[]).map((status) => {
+            const key = STATUS_TO_COUNTS_KEY[status];
+            const count = statusCounts[key] ?? 0;
+            return (
             <div
               key={status}
               className="rounded-md border border-slate-200 p-3 text-center"
             >
-              <p className="text-2xl font-bold">{statusCounts[status] || 0}</p>
+              <p className="text-2xl font-bold">{count}</p>
               <p className="text-xs text-slate-500">{STATUS_LABELS[status]}</p>
             </div>
-          ))}
+          );
+          })}
         </div>
       </SectionCard>
 

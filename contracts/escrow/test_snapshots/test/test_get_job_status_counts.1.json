@@ -1,0 +1,7 @@
+{
+  "_comment": "Placeholder — regenerate by running: cargo test -- --nocapture in contracts/escrow/",
+  "generators": {},
+  "auth": [],
+  "ledger": {},
+  "events": []
+}

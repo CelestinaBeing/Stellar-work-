@@ -8,6 +8,7 @@ import {
   getJob,
   getJobCount,
   getCompletedJobsCount,
+  getJobStatusCounts,
   submitWork,
   enforceDeadline,
 } from "@/lib/contract";
@@ -25,7 +26,8 @@ import { useNotifications, getEventLabel } from "@/lib/notifications-context";
 import { formatDeadline, toXlm } from "@/lib/format";
 import { isConfirmSuppressed, CONFIRM_KEYS } from "@/lib/confirm-prefs";
 import { useWallet } from "@/lib/wallet-context";
-import type { Job, JobStatus, NotificationEvent } from "@/lib/types";
+import type { Job, JobStatus, NotificationEvent, JobStatusCounts } from "@/lib/types";
+import { STATUS_TO_COUNTS_KEY } from "@/lib/types";
 import { useEffect, useState, useCallback, useRef, type KeyboardEvent } from "react";
 
 type PendingDashAction = {
@@ -88,6 +90,15 @@ export default function DashboardPage() {
   const [actionLoading, setActionLoading] = useState<number | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingDashAction | null>(null);
   const [completedJobsCount, setCompletedJobsCount] = useState<number | null>(null);
+  const [statusCounts, setStatusCounts] = useState<JobStatusCounts>({
+    open: 0,
+    in_progress: 0,
+    submitted_for_review: 0,
+    completed: 0,
+    cancelled: 0,
+    disputed: 0,
+    total: 0,
+  });
   const [selectedJobs, setSelectedJobs] = useState<Set<number>>(new Set());
   const [batchLoading, setBatchLoading] = useState(false);
   const [bookmarkedJobs, setBookmarkedJobs] = useState<Array<{ id: number; job: Job }>>([]);
@@ -120,6 +131,12 @@ export default function DashboardPage() {
       } catch {
         setCompletedJobsCount(null);
       }
+      try {
+        const counts = await getJobStatusCounts();
+        setStatusCounts(counts);
+      } catch {
+        // Silently ignore — status breakdown is non-critical
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to fetch jobs.");
     } finally {
@@ -134,6 +151,7 @@ export default function DashboardPage() {
       setAllJobs([]);
       setBookmarkedJobs([]);
       setCompletedJobsCount(null);
+      setStatusCounts({ open: 0, in_progress: 0, submitted_for_review: 0, completed: 0, cancelled: 0, disputed: 0, total: 0 });
       setLoading(false);
       setError(null);
     }
@@ -419,6 +437,32 @@ export default function DashboardPage() {
           <p className="text-xs text-slate-500">Your jobs on record</p>
         </div>
       </div>
+
+      {/* Platform-wide status breakdown */}
+      {statusCounts.total > 0 && (
+        <SectionCard title="Platform Overview">
+          <p className="mb-3 text-sm text-slate-500">Across all platform jobs</p>
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-7">
+            <div className="rounded-md border border-slate-200 p-3 text-center">
+              <p className="text-xl font-bold tabular-nums">{statusCounts.total}</p>
+              <p className="text-xs text-slate-500">Total</p>
+            </div>
+            {(Object.keys(STATUS_LABELS) as JobStatus[]).map((status) => {
+              const key = STATUS_TO_COUNTS_KEY[status];
+              const count = statusCounts[key] ?? 0;
+              return (
+                <div
+                  key={status}
+                  className="rounded-md border border-slate-200 p-3 text-center"
+                >
+                  <p className="text-xl font-bold tabular-nums">{count}</p>
+                  <p className="text-xs text-slate-500">{STATUS_LABELS[status]}</p>
+                </div>
+              );
+            })}
+          </div>
+        </SectionCard>
+      )}
 
       {/* Activity Feed */}
       {notifications.length > 0 && (

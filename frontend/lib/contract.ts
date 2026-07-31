@@ -4,7 +4,7 @@ import { callContract, nativeToScVal, xdr } from "@/lib/stellar";
 import { requireContractId } from "@/lib/config";
 import { getContractIdForNetwork, getPersistedNetwork } from "@/lib/network-config";
 export { requireContractId };
-import type { Job, Milestone } from "@/lib/types";
+import type { Job, Milestone, JobStatusCounts } from "@/lib/types";
 
 function getActiveContractId(): string {
   if (typeof window !== "undefined") {
@@ -513,6 +513,24 @@ export async function isTrustedForwarder(forwarder: string): Promise<boolean> {
     { readOnly: true },
   );
   return Boolean(response.data ?? false);
+}
+
+export async function getJobStatusCounts(): Promise<JobStatusCounts> {
+  const response = await callContract(
+    getActiveContractId(),
+    "get_job_status_counts",
+    [],
+    { readOnly: true },
+  );
+  return (response.data as JobStatusCounts) ?? {
+    open: 0,
+    in_progress: 0,
+    submitted_for_review: 0,
+    completed: 0,
+    cancelled: 0,
+    disputed: 0,
+    total: 0,
+  };
 }
 
 export async function relayCancelJob(relayer: string, client: string, jobId: string) {
