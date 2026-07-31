@@ -24,6 +24,14 @@ import { useWallet } from "@/lib/wallet-context";
 import type { Job, JobStatus } from "@/lib/types";
 import { useEffect, useState, useCallback } from "react";
 import { ANNOUNCEMENT_STORAGE_KEY, type AnnouncementConfig } from "@/components/AnnouncementBanner";
+import {
+  getAllFlagNames,
+  getFlagDescription,
+  initFeatureFlags,
+  setFlagOverride,
+  clearAllOverrides,
+  isEnabled,
+} from "@/lib/feature-flags";
 
 const TX_LOG_KEY = "stellarwork:admin-withdrawals";
 
@@ -66,6 +74,18 @@ export default function AdminPage() {
   const [accessTarget, setAccessTarget] = useState("");
   const [isWhitelistMode, setIsWhitelistMode] = useState(false);
   const [accessUpdating, setAccessUpdating] = useState(false);
+
+  const [featureFlags, setFeatureFlags] = useState<Record<string, boolean>>({});
+  const flagNames = getAllFlagNames();
+
+  useEffect(() => {
+    initFeatureFlags();
+    const current: Record<string, boolean> = {};
+    for (const name of flagNames) {
+      current[name] = isEnabled(name);
+    }
+    setFeatureFlags(current);
+  }, [flagNames]);
 
   const fetchAdminData = useCallback(async (walletAddress: string) => {
     setLoading(true);
@@ -458,6 +478,58 @@ export default function AdminPage() {
           </div>
         </div>
       </SectionCard>
+
+      <SectionCard title="Feature Flags">
+        <div className="mt-4 space-y-3">
+          {flagNames.map((name) => (
+            <div key={name} className="flex items-center justify-between rounded-md border border-slate-200 p-3">
+              <div>
+                <p className="text-sm font-medium text-slate-900">{name}</p>
+                <p className="text-xs text-slate-500">{getFlagDescription(name)}</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={featureFlags[name] ?? false}
+                aria-label={`Toggle ${name}`}
+                onClick={() => {
+                  const next = !(featureFlags[name] ?? false);
+                  setFlagOverride(name, next);
+                  setFeatureFlags((prev) => ({ ...prev, [name]: next }));
+                }}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                  featureFlags[name] ? "bg-slate-900" : "bg-slate-300"
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    featureFlags[name] ? "translate-x-6" : "translate-x-1"
+                  }`}
+                />
+              </button>
+            </div>
+          ))}
+          <div className="flex items-center justify-between pt-2">
+            <p className="text-xs text-slate-400">
+              Overrides stored in localStorage. URL overrides: <code className="rounded bg-slate-100 px-1 text-xs">?feature.flagName=true</code>
+            </p>
+            <button
+              className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+              onClick={() => {
+                clearAllOverrides();
+                const reset: Record<string, boolean> = {};
+                for (const name of flagNames) {
+                  reset[name] = false;
+                }
+                setFeatureFlags(reset);
+              }}
+            >
+              Reset All
+            </button>
+          </div>
+        </div>
+      </SectionCard>
+
       {showWithdrawConfirm && (
         <ConfirmDialog
           open={true}
