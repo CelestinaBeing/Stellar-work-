@@ -38,6 +38,8 @@ export interface Job {
   token: string;
   revision_count: number;
   submitted_at: string;
+  title?: string;
+  category?: string;
 }
 
 /** A single milestone within a milestone-based job. */

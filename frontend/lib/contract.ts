@@ -29,6 +29,15 @@ export function hexToBytes(hex: string): Uint8Array {
   return bytes;
 }
 
+/** Convert a title string to a 64-byte hex representation for BytesN<64>. */
+export function titleToBytesN64(title: string): Uint8Array {
+  const encoder = new TextEncoder();
+  const encoded = encoder.encode(title);
+  const padded = new Uint8Array(64);
+  padded.set(encoded.slice(0, 64));
+  return padded;
+}
+
 export async function postJob(
   client: string,
   amount: string,
@@ -36,6 +45,8 @@ export async function postJob(
   descriptionPayloadLen: number,
   deadline: string,
   tokenAddress: string,
+  title: string,
+  category: string,
 ) {
   return callContract(getActiveContractId(), "post_job", [
     nativeToScVal(client, { type: "address" }),
@@ -44,6 +55,8 @@ export async function postJob(
     nativeToScVal(descriptionPayloadLen, { type: "u32" }),
     nativeToScVal(deadline, { type: "u64" }),
     nativeToScVal(tokenAddress, { type: "address" }),
+    nativeToScVal(titleToBytesN64(title), { type: "bytes" }),
+    nativeToScVal(category, { type: "symbol" }),
   ]);
 }
 
@@ -301,6 +314,8 @@ export async function createJobWithMilestones(
   descriptionPayloadLen: number,
   deadline: string,
   tokenAddress: string,
+  title: string,
+  category: string,
 ) {
   // Encode milestones as a Vec<MilestoneInput> — each element is a struct map.
   const encodedMilestones = xdr.ScVal.scvVec(
@@ -325,6 +340,8 @@ export async function createJobWithMilestones(
     nativeToScVal(descriptionPayloadLen, { type: "u32" }),
     nativeToScVal(deadline, { type: "u64" }),
     nativeToScVal(tokenAddress, { type: "address" }),
+    nativeToScVal(titleToBytesN64(title), { type: "bytes" }),
+    nativeToScVal(category, { type: "symbol" }),
   ]);
 }
 

@@ -394,6 +394,8 @@ export default function HomePage() {
             amount,
             job.client.toLowerCase(),
             freelancer,
+            (job.title || "").toLowerCase(),
+            (job.category || "").toLowerCase(),
           ].some((value) => value.includes(normalizedSearchTerm));
         })
       : bookmarkedJobs;
@@ -893,7 +895,7 @@ export default function HomePage() {
                   </div>
                   <Link href={`/job/${id}`} className="block" onClick={() => markJobViewed(id)}>
                     <h2 className="flex items-center gap-2 text-lg font-medium hover:underline">
-                      Job #{id}
+                      {job.title || `Job #${id}`}
                       {newJobIds.has(id) && (
                         <span
                           aria-hidden="true"
@@ -904,6 +906,11 @@ export default function HomePage() {
                       )}
                     </h2>
                   </Link>
+                  {job.category && (
+                    <span className="mt-1 inline-block rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                      {job.category}
+                    </span>
+                  )}
                   <p
                     className="mt-2 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm font-bold tabular-nums text-slate-700"
                     title={fiatTooltip}

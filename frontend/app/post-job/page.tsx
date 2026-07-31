@@ -17,11 +17,23 @@ import {
 const MIN_JOB_AMOUNT_XLM = 0.5;
 const DRAFT_STORAGE_KEY_PREFIX = "stellarwork:post-job-draft:";
 
+const JOB_CATEGORIES = [
+  "development",
+  "design",
+  "writing",
+  "marketing",
+  "video",
+  "consulting",
+  "other",
+] as const;
+
 interface DraftData {
   amount: string;
   description: string;
   deadline: string;
   tokenAddress: string;
+  title: string;
+  category: string;
   savedAt: number;
 }
 
@@ -68,6 +80,8 @@ export default function PostJobPage() {
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [deadline, setDeadline] = useState("");
+  const [title, setTitle] = useState("");
+  const [category, setCategory] = useState("development");
   const descriptionLabelId = useId();
   const [tokenAddress, setTokenAddress] = useState(
     process.env.NEXT_PUBLIC_NATIVE_TOKEN ?? "",
@@ -83,6 +97,7 @@ export default function PostJobPage() {
     description?: string;
     deadline?: string;
     tokenAddress?: string;
+    title?: string;
   }>({});
   const [rateLimit, setRateLimit] = useState<RateLimitStatus>({
     remaining: 5,
@@ -117,6 +132,8 @@ export default function PostJobPage() {
       setTokenAddress(
         draft.tokenAddress || process.env.NEXT_PUBLIC_NATIVE_TOKEN || "",
       );
+      setTitle(draft.title || "");
+      setCategory(draft.category || "development");
       setDraftSavedAt(draft.savedAt);
       setHasDraft(true);
     } else {
@@ -135,6 +152,8 @@ export default function PostJobPage() {
     setDescription("");
     setDeadline("");
     setTokenAddress(process.env.NEXT_PUBLIC_NATIVE_TOKEN ?? "");
+    setTitle("");
+    setCategory("development");
     setDraftSavedAt(null);
     setHasDraft(false);
     const draft = loadDraft(wallet);
@@ -146,6 +165,8 @@ export default function PostJobPage() {
       setTokenAddress(
         draft.tokenAddress || process.env.NEXT_PUBLIC_NATIVE_TOKEN || "",
       );
+      setTitle(draft.title || "");
+      setCategory(draft.category || "development");
       setDraftSavedAt(draft.savedAt);
       setHasDraft(true);
     }
@@ -195,6 +216,8 @@ export default function PostJobPage() {
         description,
         deadline,
         tokenAddress,
+        title,
+        category,
         savedAt: now,
       });
       setDraftSavedAt(now);
@@ -206,7 +229,7 @@ export default function PostJobPage() {
         clearTimeout(debounceTimerRef.current);
       }
     };
-  }, [amount, description, deadline, tokenAddress, wallet]);
+  }, [amount, description, deadline, tokenAddress, title, category, wallet]);
 
   // Warn on navigation away when unsaved changes exist
   useEffect(() => {
@@ -228,6 +251,8 @@ export default function PostJobPage() {
     setDescription("");
     setDeadline("");
     setTokenAddress(process.env.NEXT_PUBLIC_NATIVE_TOKEN ?? "");
+    setTitle("");
+    setCategory("development");
     setDraftSavedAt(null);
     setHasDraft(false);
     setFieldErrors({});
@@ -282,6 +307,7 @@ export default function PostJobPage() {
               description?: string;
               deadline?: string;
               tokenAddress?: string;
+              title?: string;
             } = {};
             const amountStroops = parseAmountToStroops(amount);
             if (!amountStroops || BigInt(amountStroops) <= 0n) {
@@ -324,6 +350,11 @@ export default function PostJobPage() {
             if (!tokenAddress.trim()) {
               nextFieldErrors.tokenAddress = "Token address is required.";
             }
+            if (!title.trim()) {
+              nextFieldErrors.title = "Job title is required.";
+            } else if (new TextEncoder().encode(title).length > 64) {
+              nextFieldErrors.title = `Title must be at most 64 bytes (currently ${new TextEncoder().encode(title).length}).`;
+            }
             if (Object.keys(nextFieldErrors).length > 0) {
               setFieldErrors(nextFieldErrors);
               return;
@@ -345,6 +376,8 @@ export default function PostJobPage() {
               descriptionPayloadLen,
               deadlineUnix,
               tokenAddress.trim(),
+              title.trim(),
+              category,
             );
             if (cid && !cid.startsWith("fallback:")) {
               try {
@@ -371,6 +404,8 @@ export default function PostJobPage() {
             setAmount("");
             setDescription("");
             setDeadline("");
+            setTitle("");
+            setCategory("development");
             setDraftSavedAt(null);
             setHasDraft(false);
           } catch (e) {
@@ -383,7 +418,8 @@ export default function PostJobPage() {
         {(fieldErrors.amount ||
           fieldErrors.description ||
           fieldErrors.deadline ||
-          fieldErrors.tokenAddress) && (
+          fieldErrors.tokenAddress ||
+          fieldErrors.title) && (
           <div
             id="post-job-errors"
             role="alert"
@@ -397,6 +433,7 @@ export default function PostJobPage() {
               {fieldErrors.description && <li>{fieldErrors.description}</li>}
               {fieldErrors.deadline && <li>{fieldErrors.deadline}</li>}
               {fieldErrors.tokenAddress && <li>{fieldErrors.tokenAddress}</li>}
+              {fieldErrors.title && <li>{fieldErrors.title}</li>}
             </ul>
           </div>
         )}
@@ -425,6 +462,44 @@ export default function PostJobPage() {
               {fieldErrors.amount}
             </p>
           )}
+        </label>
+
+        <label className="block text-sm font-medium">
+          Job Title
+          <input
+            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2"
+            type="text"
+            maxLength={64}
+            value={title}
+            onChange={(e) => {
+              setTitle(e.target.value);
+              setFieldErrors((current) => ({ ...current, title: undefined }));
+            }}
+            aria-invalid={Boolean(fieldErrors.title)}
+            aria-describedby={fieldErrors.title ? "post-job-title-error" : undefined}
+            placeholder="e.g. Build a landing page"
+            required
+          />
+          {fieldErrors.title && (
+            <p id="post-job-title-error" className="mt-1 text-xs text-red-600">
+              {fieldErrors.title}
+            </p>
+          )}
+        </label>
+
+        <label className="block text-sm font-medium">
+          Category
+          <select
+            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 bg-white"
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+          >
+            {JOB_CATEGORIES.map((cat) => (
+              <option key={cat} value={cat}>
+                {cat.charAt(0).toUpperCase() + cat.slice(1)}
+              </option>
+            ))}
+          </select>
         </label>
 
         <div className="block text-sm font-medium">

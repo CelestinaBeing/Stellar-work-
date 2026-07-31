@@ -101,6 +101,8 @@ pub struct Job {
     pub token: Address,
     pub revision_count: u32,
     pub submitted_at: u64,
+    pub title: BytesN<64>,
+    pub category: Symbol,
 }
 
 #[derive(Clone, Debug)]
@@ -445,6 +447,8 @@ impl EscrowContract {
         description_payload_len: u32,
         deadline: u64,
         token_address: Address,
+        title: BytesN<64>,
+        category: Symbol,
     ) -> u64 {
         client.require_auth();
         check_access(&env, &client);
@@ -490,6 +494,8 @@ impl EscrowContract {
             token: token_address,
             revision_count: 0,
             submitted_at: 0,
+            title,
+            category,
         };
         put_job(&env, count, &job);
         count
@@ -503,6 +509,8 @@ impl EscrowContract {
         description_payload_len: u32,
         deadline: u64,
         token_address: Address,
+        title: BytesN<64>,
+        category: Symbol,
         sla_config: SLAConfig,
     ) -> u64 {
         let job_id = Self::post_job(
@@ -513,6 +521,8 @@ impl EscrowContract {
             description_payload_len,
             deadline,
             token_address,
+            title,
+            category,
         );
         env.storage()
             .persistent()
@@ -1199,6 +1209,8 @@ impl EscrowContract {
         milestones: Vec<Milestone>,
         deadline: u64,
         token_address: Address,
+        title: BytesN<64>,
+        category: Symbol,
     ) -> u64 {
         client.require_auth();
         check_access(&env, &client);
@@ -1250,6 +1262,8 @@ impl EscrowContract {
             token: token_address,
             revision_count: 0,
             submitted_at: 0,
+            title,
+            category,
         };
         put_job(&env, count, &job);
         count
