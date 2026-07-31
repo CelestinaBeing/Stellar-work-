@@ -407,3 +407,36 @@ fn test_sla_breach_event_emitted() {
 
     assert!(post_events > pre_events, "SLA breach should emit an event");
 }
+
+#[test]
+fn test_get_client_jobs_returns_correct_ids() {
+    let (env, client, _, user, _, native_token) = setup();
+
+    // 1. Verify initially empty
+    let initial_jobs = client.get_client_jobs(&user);
+    assert_eq!(initial_jobs.len(), 0);
+
+    // 2. Post two jobs
+    let id1 = client.post_job(
+        &user,
+        &1_000_000i128,
+        &hash(&env),
+        &32u32,
+        &0u64,
+        &native_token,
+    );
+    let id2 = client.post_job(
+        &user,
+        &2_000_000i128,
+        &hash(&env),
+        &32u32,
+        &0u64,
+        &native_token,
+    );
+
+    // 3. Verify indexed jobs match posted job IDs
+    let client_jobs = client.get_client_jobs(&user);
+    assert_eq!(client_jobs.len(), 2);
+    assert_eq!(client_jobs.get(0).unwrap(), id1);
+    assert_eq!(client_jobs.get(1).unwrap(), id2);
+}

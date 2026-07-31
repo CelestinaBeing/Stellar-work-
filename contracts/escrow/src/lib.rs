@@ -240,6 +240,28 @@ pub struct SwapPreference {
     pub max_slippage_bps: u32,
 }
 
+fn get_client_jobs_storage(env: &Env, client: &Address) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::ClientJobs(client.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+fn add_job_for_client(env: &Env, client: &Address, job_id: u64) {
+    let mut jobs = get_client_jobs_storage(env, client);
+    jobs.push_back(job_id);
+    env.storage()
+        .persistent()
+        .set(&DataKey::ClientJobs(client.clone()), &jobs);
+    
+    // Extend storage TTL for persistent keys
+    env.storage().persistent().extend_ttl(
+        &DataKey::ClientJobs(client.clone()),
+        ACTIVE_JOB_LIFETIME_THRESHOLD,
+        ACTIVE_JOB_BUMP_AMOUNT,
+    );
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
@@ -247,6 +269,7 @@ pub enum DataKey {
     NativeToken,
     JobCount,
     Job(u64),
+    ClientJobs(Address),
     AllowedTokens,
     AllowedToken(u32),
     AllowedTokenCount,
@@ -439,6 +462,11 @@ impl EscrowContract {
         env.storage().instance().get(&DataKey::DescPayloadMax).unwrap_or(MAX_DESC_PAYLOAD)
     }
 
+    pub fn get_client_jobs(env: Env, client: Address) -> Vec<u64> {
+        get_client_jobs_storage(&env, &client)
+    }
+}
+
 fn get_job(env: &Env, job_id: u64) -> Job {
     env.storage()
         .persistent()
@@ -494,43 +522,29 @@ fn check_whitelist(env: &Env, address: &Address) -> Result<(), Error> {
 pub struct Escrow;
 
 #[contractimpl]
-impl Escrow {
-    pub fn initialize(env: Env, admin: Address, native_token: Address) -> Result<(), Error> {
-        if env
-            .storage()
-            .instance()
-            .get::<DataKey, Address>(&DataKey::Admin)
-            .is_some()
-        {
-            return Err(Error::AlreadyInitialized);
+#[contractimpl]
+impl EscrowContract {
+    pub fn initialize(env: Env, admin: Address, native_token: Address) {
+        if env.storage().instance().has(&DataKey::Admin) {
+            panic!("already initialized");
         }
-
-        admin.require_auth();
-
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage()
-            .instance()
-            .set(&DataKey::NativeToken, &native_token);
-        env.storage()
-            .instance()
-            .set(&DataKey::JobCount, &0u64);
-        env.storage()
-            .instance()
-            .set(&DataKey::CompletedJobsCount, &0u64);
-        env.storage()
-            .instance()
-            .set(&DataKey::FeeBps, &FEE_BPS);
-        env.storage()
-            .instance()
-            .set(&DataKey::MaxDescPayloadLen, &MAX_DESC_PAYLOAD_LEN);
-        env.storage()
-            .instance()
-            .set(&DataKey::WhitelistMode, &false);
+        env.storage().instance().set(&DataKey::NativeToken, &native_token);
+        env.storage().instance().set(&DataKey::JobCount, &0u64);
+        env.storage().instance().set(&DataKey::CompletedJobsCount, &0u64);
+        env.storage().instance().set(&DataKey::DescPayloadMax, &MAX_DESC_PAYLOAD);
+        env.storage().instance().set(&DataKey::Fees, &Fees { total_collected: 0 });
+        env.storage().instance().set(&DataKey::AllowedTokenCount, &0u32);
+        env.storage().instance().extend_ttl(10000, 10000);
+    }
 
-        env.events()
-            .publish((symbol_short!("init"),), (admin, native_token));
+    pub fn set_desc_payload_max(env: Env, max: u32) {
+        require_admin(&env);
+        env.storage().instance().set(&DataKey::DescPayloadMax, &max);
+    }
 
-        Ok(())
+    pub fn get_desc_payload_max(env: Env) -> u32 {
+        env.storage().instance().get(&DataKey::DescPayloadMax).unwrap_or(MAX_DESC_PAYLOAD)
     }
 
     pub fn post_job(
@@ -561,7 +575,7 @@ impl Escrow {
         env.storage().instance().set(&DataKey::JobCount, &count);
 
         let job = Job {
-            client,
+            client: client.clone(),
             freelancer: None,
             amount,
             description_hash: desc_hash,
@@ -573,44 +587,11 @@ impl Escrow {
             revision_count: 0,
         };
         put_job(&env, count, &job);
+
+        // Index job ID per client
+        add_job_for_client(&env, &client, count);
+
         count
-    }
-
-    pub fn post_job_with_sla(
-        env: Env,
-        client: Address,
-        amount: i128,
-        desc_hash: BytesN<32>,
-        description_payload_len: u32,
-        deadline: u64,
-        token_address: Address,
-        sla_config: SLAConfig,
-    ) -> u64 {
-        let job_id = Self::post_job(
-            env.clone(),
-            client,
-            amount,
-            desc_hash,
-            description_payload_len,
-            deadline,
-            token_address,
-        );
-        env.storage().persistent().set(&DataKey::SLAConfig(job_id), &sla_config);
-        env.storage().persistent().set(&DataKey::SLAAcceptedAt(job_id), &0u64);
-        env.storage().persistent().set(&DataKey::SLABreachPenalty(job_id), &0i128);
-        job_id
-    }
-
-    pub fn get_sla_status(env: Env, job_id: u64) -> SLAStatus {
-        let config: Option<SLAConfig> = env.storage().persistent().get(&DataKey::SLAConfig(job_id));
-        let accepted_at: u64 = env.storage().persistent().get(&DataKey::SLAAcceptedAt(job_id)).unwrap_or(0);
-        let penalty: i128 = env.storage().persistent().get(&DataKey::SLABreachPenalty(job_id)).unwrap_or(0);
-        SLAStatus {
-            config,
-            accepted_at,
-            breached: penalty > 0,
-            penalty_applied: penalty > 0,
-        }
     }
 
     pub fn accept_job(env: Env, freelancer: Address, job_id: u64) {
@@ -708,39 +689,6 @@ impl Escrow {
         put_job(&env, job_id, &job);
     }
 
-    pub fn cancel_with_rebate(env: Env, client: Address, job_id: u64) {
-        client.require_auth();
-        let mut job = get_job(&env, job_id);
-        if job.client != client { panic!("not authorized"); }
-        if job.status != JobStatus::Open { panic!("job not open"); }
-        let ledger = current_ledger(&env);
-        if ledger > job.created_at + CANCELLATION_GRACE_PERIOD {
-            panic!("grace period expired");
-        }
-
-        let mut fees: Fees = env.storage().instance().get(&DataKey::Fees).unwrap_or(Fees { total_collected: 0 });
-        let fee = job.amount * PLATFORM_FEE_BPS as i128 / 10000;
-        if fees.total_collected >= fee {
-            fees.total_collected -= fee;
-        } else {
-            fees.total_collected = 0;
-        }
-        env.storage().instance().set(&DataKey::Fees, &fees);
-
-        let token = token::Client::new(&env, &job.token);
-        token.transfer(&env.current_contract_address(), &client, &job.amount);
-        job.status = JobStatus::Cancelled;
-        put_job(&env, job_id, &job);
-    }
-
-    pub fn get_cancellation_rebate_info(env: Env, job_id: u64) -> CancellationRebateInfo {
-        let job = get_job(&env, job_id);
-        let ledger = current_ledger(&env);
-        let grace_deadline = job.created_at + CANCELLATION_GRACE_PERIOD;
-        let is_eligible = job.status == JobStatus::Open && ledger <= grace_deadline;
-        CancellationRebateInfo { grace_deadline, is_eligible }
-    }
-
     pub fn enforce_deadline(env: Env, caller: Address, job_id: u64) {
         caller.require_auth();
         let mut job = get_job(&env, job_id);
@@ -787,426 +735,6 @@ impl Escrow {
         token.transfer(&env.current_contract_address(), &winner, &payout);
         job.status = JobStatus::Completed;
         put_job(&env, job_id, &job);
-        desc_hash: Bytes,
-        description_payload_len: u32,
-        deadline: u64,
-        token: Address,
-    ) -> Result<u64, Error> {
-        client.require_auth();
-        check_whitelist(&env, &client)?;
-
-        let max_payload: u32 = env
-            .storage()
-            .instance()
-            .get(&DataKey::MaxDescPayloadLen)
-            .unwrap_or(MAX_DESC_PAYLOAD_LEN);
-        if description_payload_len > max_payload {
-            return Err(Error::DescriptionTooLong);
-        }
-
-        let is_allowed: bool = env
-            .storage()
-            .instance()
-            .get(&DataKey::AllowedToken(token.clone()))
-            .unwrap_or(false);
-        let native: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::NativeToken)
-            .expect("Not initialized");
-        if token != native && !is_allowed {
-            return Err(Error::TokenNotAllowed);
-        }
-
-        let count: u64 = env
-            .storage()
-            .instance()
-            .get(&DataKey::JobCount)
-            .unwrap_or(0);
-        let job_id = count + 1;
-        env.storage()
-            .instance()
-            .set(&DataKey::JobCount, &job_id);
-
-        let job = Job {
-            client: client.clone(),
-            freelancer: Address::from_string(&String::from_str(
-                &env,
-                "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
-            )),
-            amount,
-            description_hash: desc_hash.clone(),
-            status: JobStatus::Open,
-            created_at: env.ledger().timestamp(),
-            deadline,
-            token,
-            revision_count: 0,
-            submitted_at: 0,
-        };
-        save_job(&env, job_id, &job);
-
-        env.events()
-            .publish(
-                (symbol_short!("posted"),),
-                (job_id, client, desc_hash, amount),
-            );
-
-        Ok(job_id)
-    }
-
-    pub fn accept_job(env: Env, freelancer: Address, job_id: u64) -> Result<(), Error> {
-        freelancer.require_auth();
-        check_whitelist(&env, &freelancer)?;
-
-        let mut job = get_job(&env, job_id);
-        if job.status != JobStatus::Open {
-            return Err(Error::InvalidJobStatus);
-        }
-
-        job.freelancer = freelancer.clone();
-        job.status = JobStatus::InProgress;
-        save_job(&env, job_id, &job);
-
-        env.events().publish(
-            (symbol_short!("accepted"),),
-            (job_id, job.client, freelancer, job.amount),
-        );
-
-        Ok(())
-    }
-
-    pub fn submit_work(env: Env, freelancer: Address, job_id: u64) -> Result<(), Error> {
-        freelancer.require_auth();
-
-        let mut job = get_job(&env, job_id);
-        if job.freelancer != freelancer {
-            return Err(Error::NotJobFreelancer);
-        }
-        if job.status != JobStatus::InProgress {
-            return Err(Error::InvalidJobStatus);
-        }
-
-        job.status = JobStatus::SubmittedForReview;
-        job.submitted_at = e.ledger().timestamp();
-        set_job(&e, job_id, &job);
-        bump_instance_ttl(&e);
-        save_job(&env, job_id, &job);
-
-        env.events().publish(
-            (symbol_short!("wrk_sub"),),
-            (job_id, job.client, freelancer, job.amount),
-        );
-
-        Ok(())
-    }
-
-    pub fn submit_revision(env: Env, freelancer: Address, job_id: u64) -> Result<(), Error> {
-        freelancer.require_auth();
-
-        let mut job = get_job(&env, job_id);
-        if job.freelancer != freelancer {
-            return Err(Error::NotJobFreelancer);
-        }
-        if job.status != JobStatus::SubmittedForReview {
-            return Err(Error::InvalidJobStatus);
-        }
-
-        let freelancer = match job.freelancer.clone() {
-            Option::Some(addr) => addr,
-            Option::None => panic_with_error!(&e, Error::InvalidStatus),
-        };
-
-        let fee = checked_mul_div(&e, job.amount, get_fee_bps_storage(&e), BPS_DENOMINATOR);
-        let payout = checked_sub(&e, job.amount, fee);
-        let current_fees = get_token_fees(&e, &job.token);
-        let updated_fees = checked_add(&e, current_fees, fee);
-
-        job.status = JobStatus::Completed;
-        set_job(&e, job_id, &job);
-        e.storage()
-            .persistent()
-            .set(&DataKey::TokenFees(job.token.clone()), &updated_fees);
-        bump_token_fees_ttl(&e, &job.token);
-        bump_instance_ttl(&e);
-
-        let swap_pref: Option<SwapPreference> = e
-            .storage()
-            .persistent()
-            .get(&DataKey::SwapPreference(job_id));
-
-        if let Option::Some(pref) = swap_pref {
-            let token_client = token::Client::new(&e, &job.token);
-            token_client.transfer(&e.current_contract_address(), &freelancer, &payout);
-
-            e.storage()
-                .persistent()
-                .remove(&DataKey::SwapPreference(job_id));
-
-            e.events().publish(
-                (Symbol::new(&e, "token_swap"),),
-                (
-                    job_id,
-                    job.token.clone(),
-                    pref.desired_token.clone(),
-                    payout,
-                    BPS_DENOMINATOR,
-                ),
-            );
-        } else {
-            let token_client = token::Client::new(&e, &job.token);
-            token_client.transfer(&e.current_contract_address(), &freelancer, &payout);
-        }
-        let payout = complete_job_and_payout(&e, job_id, &mut job, freelancer.clone());
-
-        e.events().publish(
-            (Symbol::new(&e, "job_approved"),),
-            (job_id, client, freelancer, payout),
-        );
-    }
-
-    pub fn auto_approve(e: Env, freelancer: Address, job_id: u64) {
-        let mut job = get_job_or_panic(&e, job_id);
-        freelancer.require_auth();
-        require_active_access(&e, &freelancer);
-
-        if job.status != JobStatus::SubmittedForReview {
-            panic_with_error!(&e, Error::InvalidStatus);
-        }
-        if job.freelancer != Option::Some(freelancer.clone()) {
-            panic_with_error!(&e, Error::Unauthorized);
-        }
-
-        let window = get_approval_window_storage(&e);
-        let time_passed = e.ledger().timestamp() > job.submitted_at.checked_add(window).unwrap_or(u64::MAX);
-        if !time_passed {
-            panic_with_error!(&e, Error::DeadlineNotExpired);
-        }
-
-        let payout = complete_job_and_payout(&e, job_id, &mut job, freelancer.clone());
-
-        e.events().publish(
-            (Symbol::new(&e, "payment_auto_approved"),),
-            (job_id, freelancer, payout),
-        );
-        job.revision_count += 1;
-        save_job(&env, job_id, &job);
-
-        Ok(())
-    }
-
-    pub fn approve_work(env: Env, client: Address, job_id: u64) -> Result<(), Error> {
-        client.require_auth();
-
-        let mut job = get_job(&env, job_id);
-        if job.client != client {
-            return Err(Error::NotJobClient);
-        }
-        if job.status != JobStatus::SubmittedForReview {
-            return Err(Error::InvalidJobStatus);
-        }
-
-        job.status = JobStatus::InProgress;
-        job.revision_count += 1;
-        job.submitted_at = 0;
-        set_job(&e, job_id, &job);
-        bump_instance_ttl(&e);
-        job.status = JobStatus::Completed;
-        save_job(&env, job_id, &job);
-        increment_completed_count(&env);
-
-        env.events().publish(
-            (symbol_short!("wrk_appr"),),
-            (job_id, client, job.freelancer, job.amount),
-        );
-
-        Ok(())
-    }
-
-    pub fn update_approval_window(e: Env, admin: Address, new_window: u64) {
-        admin.require_auth();
-        let stored_admin = load_admin(&e);
-        if admin != stored_admin {
-            panic_with_error!(&e, Error::UnauthorizedAdmin);
-        }
-        e.storage().instance().set(&DataKey::ApprovalWindow, &new_window);
-        bump_instance_ttl(&e);
-        e.events().publish(
-            (Symbol::new(&e, "approval_window_updated"),),
-            (new_window,),
-        );
-    }
-
-    pub fn get_approval_window(e: Env) -> u64 {
-        get_approval_window_storage(&e)
-    }
-
-    pub fn cancel_job(env: Env, client: Address, job_id: u64) -> Result<(), Error> {
-        client.require_auth();
-
-        let mut job = get_job(&env, job_id);
-        if job.client != client {
-            return Err(Error::NotJobClient);
-        }
-        if job.status != JobStatus::Open && job.status != JobStatus::InProgress {
-            return Err(Error::InvalidJobStatus);
-        }
-
-        job.status = JobStatus::Cancelled;
-        save_job(&env, job_id, &job);
-
-        env.events().publish(
-            (symbol_short!("cancelled"),),
-            (job_id, client, job.freelancer, job.amount),
-        );
-
-        Ok(())
-    }
-
-    pub fn freelancer_cancel_job(
-        env: Env,
-        freelancer: Address,
-        job_id: u64,
-    ) -> Result<(), Error> {
-        freelancer.require_auth();
-
-        let mut job = get_job(&env, job_id);
-        if job.freelancer != freelancer {
-            return Err(Error::NotJobFreelancer);
-        }
-        if job.status != JobStatus::InProgress {
-            return Err(Error::InvalidJobStatus);
-        }
-
-        job.status = JobStatus::Cancelled;
-        save_job(&env, job_id, &job);
-
-        env.events().publish(
-            (symbol_short!("cancelled"),),
-            (job_id, job.client, freelancer, job.amount),
-        );
-
-        Ok(())
-    }
-
-    pub fn enforce_deadline(env: Env, caller: Address, job_id: u64) -> Result<(), Error> {
-        caller.require_auth();
-
-        let mut job = get_job(&env, job_id);
-        if job.status != JobStatus::Open && job.status != JobStatus::InProgress {
-            return Err(Error::InvalidJobStatus);
-        }
-
-        let now = env.ledger().timestamp();
-        if job.deadline == 0 || now <= job.deadline {
-            return Err(Error::DeadlinePassed);
-        }
-
-        job.status = JobStatus::Cancelled;
-        save_job(&env, job_id, &job);
-
-        env.events().publish(
-            (symbol_short!("cancelled"),),
-            (job_id, job.client, job.freelancer, job.amount),
-        );
-
-        Ok(())
-    }
-
-    pub fn extend_deadline(
-        env: Env,
-        client: Address,
-        job_id: u64,
-        new_deadline: u64,
-        freelancer_consent: Vec<Address>,
-    ) -> Result<(), Error> {
-        client.require_auth();
-
-        let mut job = get_job(&env, job_id);
-        if job.client != client {
-            return Err(Error::NotJobClient);
-        }
-
-        if freelancer_consent.len() > 0 {
-            let consent_addr = freelancer_consent.get(0).unwrap();
-            if consent_addr != job.freelancer {
-                return Err(Error::Unauthorized);
-            }
-        }
-
-        job.deadline = new_deadline;
-        save_job(&env, job_id, &job);
-
-        Ok(())
-    }
-
-    pub fn extend_job_ttl(env: Env, caller: Address, job_id: u64) -> Result<(), Error> {
-        caller.require_auth();
-
-        let _job = get_job(&env, job_id);
-
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::Job(job_id), 518400, 518400);
-
-        env.events()
-            .publish((symbol_short!("ttl_ext"),), (job_id,));
-
-        Ok(())
-    }
-
-    pub fn raise_dispute(env: Env, caller: Address, job_id: u64) -> Result<(), Error> {
-        caller.require_auth();
-
-        let mut job = get_job(&env, job_id);
-        if job.client != caller && job.freelancer != caller {
-            return Err(Error::Unauthorized);
-        }
-        if job.status != JobStatus::SubmittedForReview
-            && job.status != JobStatus::InProgress
-        {
-            return Err(Error::InvalidJobStatus);
-        }
-
-        job.status = JobStatus::Disputed;
-        save_job(&env, job_id, &job);
-
-        env.events().publish(
-            (symbol_short!("disputed"),),
-            (job_id, job.client, job.freelancer, job.amount),
-        );
-
-        Ok(())
-    }
-
-    pub fn resolve_dispute(env: Env, job_id: u64, client_bps_vec: Vec<u32>) -> Result<(), Error> {
-        let _admin = check_admin(&env);
-
-        let mut job = get_job(&env, job_id);
-        if job.status != JobStatus::Disputed {
-            return Err(Error::JobNotDisputed);
-        }
-
-        let client_bps = if client_bps_vec.len() > 0 {
-            client_bps_vec.get(0).unwrap()
-        } else {
-            5000
-        };
-
-        if client_bps > 10000 {
-            return Err(Error::InvalidDisputeSplit);
-        }
-
-        job.status = JobStatus::Completed;
-        save_job(&env, job_id, &job);
-        increment_completed_count(&env);
-
-        let freelancer_bps = 10000u32 - client_bps;
-        env.events().publish(
-            (symbol_short!("disp_res"),),
-            (job_id, job.client, job.freelancer, job.amount, client_bps, freelancer_bps),
-        );
-
-        Ok(())
     }
 
     pub fn resolve_dispute_split(
@@ -1234,43 +762,30 @@ impl Escrow {
         put_job(&env, job_id, &job);
     }
 
-    pub fn store_description_cid(env: Env, caller: Address, _job_id: u64, _cid: Bytes) {
+    pub fn store_description_cid(env: Env, caller: Address, desc_hash: Bytes, cid: String) -> Result<(), Error> {
         caller.require_auth();
-        job_id: u64,
-        client_payout_bps: u32,
-    ) -> Result<(), Error> {
-        check_admin(&env);
-
-        let mut job = get_job(&env, job_id);
-        if job.status != JobStatus::Disputed {
-            return Err(Error::JobNotDisputed);
-        }
-        if client_payout_bps > 10000 {
-            return Err(Error::InvalidDisputeSplit);
-        }
-
-        job.status = JobStatus::Completed;
-        save_job(&env, job_id, &job);
-        increment_completed_count(&env);
-
-        let freelancer_bps = 10000u32 - client_payout_bps;
-        env.events().publish(
-            (symbol_short!("DispRes"),),
-            (
-                job_id,
-                job.client,
-                job.freelancer,
-                job.amount,
-                client_payout_bps,
-                freelancer_bps,
-            ),
-        );
-
+        env.storage()
+            .persistent()
+            .set(&DataKey::DescriptionCID(desc_hash.clone()), &cid);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::DescriptionCID(desc_hash), 518400, 518400);
         Ok(())
+    }
+
+    pub fn get_description_cid(env: Env, desc_hash: Bytes) -> String {
+        env.storage()
+            .persistent()
+            .get(&DataKey::DescriptionCID(desc_hash))
+            .unwrap_or_else(|| String::from_str(&env, ""))
     }
 
     pub fn get_job(env: Env, job_id: u64) -> Job {
         get_job(&env, job_id)
+    }
+
+    pub fn get_client_jobs(env: Env, client: Address) -> Vec<u64> {
+        get_client_jobs_storage(&env, &client)
     }
 
     pub fn get_job_count(env: Env) -> u64 {
@@ -1411,111 +926,7 @@ impl Escrow {
     }
 
     pub fn get_native_token(env: Env) -> Address {
-        env.storage().instance().get(&DataKey::NativeToken).unwrap()
-        env.storage()
-            .instance()
-            .get(&DataKey::JobCount)
-            .unwrap_or(0)
-    }
-
-    pub fn get_completed_jobs_count(env: Env) -> u64 {
-        env.storage()
-            .instance()
-            .get(&DataKey::CompletedJobsCount)
-            .unwrap_or(0)
-    }
-
-    pub fn get_desc_payload_max(env: Env) -> u32 {
-        env.storage()
-            .instance()
-            .get(&DataKey::MaxDescPayloadLen)
-            .unwrap_or(MAX_DESC_PAYLOAD_LEN)
-    }
-
-    pub fn get_native_token(env: Env) -> Address {
-        env.storage()
-            .instance()
-            .get(&DataKey::NativeToken)
-            .expect("Not initialized")
-    }
-
-    pub fn get_fees(env: Env, token: Address) -> i128 {
-        env.storage()
-            .instance()
-            .get(&DataKey::Fees(token))
-            .unwrap_or(0)
-    }
-
-    pub fn withdraw_fees(env: Env, token: Address) -> Result<(), Error> {
-        let admin = check_admin(&env);
-
-        let accumulated: i128 = env
-            .storage()
-            .instance()
-            .get(&DataKey::Fees(token.clone()))
-            .unwrap_or(0);
-        if accumulated <= 0 {
-            return Err(Error::NoFeesToWithdraw);
-        }
-
-        env.storage()
-            .instance()
-            .set(&DataKey::Fees(token.clone()), &0i128);
-
-        env.events()
-            .publish((symbol_short!("fees_wdr"),), (admin, token, accumulated));
-
-        Ok(())
-    }
-
-    pub fn add_allowed_token(env: Env, token: Address) -> Result<(), Error> {
-        check_admin(&env);
-        env.storage()
-            .instance()
-            .set(&DataKey::AllowedToken(token.clone()), &true);
-        env.events()
-            .publish((symbol_short!("tok_add"),), (token,));
-        Ok(())
-    }
-
-    pub fn remove_allowed_token(env: Env, token: Address) -> Result<(), Error> {
-        check_admin(&env);
-        env.storage()
-            .instance()
-            .set(&DataKey::AllowedToken(token.clone()), &false);
-        env.events()
-            .publish((symbol_short!("tok_rem"),), (token,));
-        Ok(())
-    }
-
-    pub fn is_token_allowed(env: Env, token: Address) -> bool {
-        env.storage()
-            .instance()
-            .get(&DataKey::AllowedToken(token))
-            .unwrap_or(false)
-    }
-
-    pub fn store_description_cid(
-        env: Env,
-        caller: Address,
-        desc_hash: Bytes,
-        cid: String,
-    ) -> Result<(), Error> {
-        caller.require_auth();
-        env.storage()
-            .persistent()
-            .set(&DataKey::DescriptionCID(desc_hash.clone()), &cid);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::DescriptionCID(desc_hash), 518400, 518400);
-        Ok(())
-    }
-
-    pub fn get_description_cid(env: Env, desc_hash: Bytes) -> String {
-        env.storage()
-            .persistent()
-            .get(&DataKey::DescriptionCID(desc_hash))
-            .unwrap_or_else(|| String::from_str(&env, ""))
+        env.storage().instance().get(&DataKey::NativeToken).expect("Not initialized")
     }
 
     pub fn create_job_with_milestones(
@@ -1550,7 +961,7 @@ impl Escrow {
         }
 
         let job = Job {
-            client,
+            client: client.clone(),
             freelancer: None,
             amount: total,
             description_hash: BytesN::from_array(&env, &[0u8; 32]),
@@ -1562,6 +973,10 @@ impl Escrow {
             revision_count: 0,
         };
         put_job(&env, count, &job);
+
+        // Index milestone job ID per client
+        add_job_for_client(&env, &client, count);
+
         count
     }
 
@@ -1641,63 +1056,6 @@ impl Escrow {
     }
 }
 
-mod test;
-        desc_hash: Bytes,
-        _description_payload_len: u32,
-        deadline: u64,
-        token: Address,
-    ) -> Result<u64, Error> {
-        client.require_auth();
-        check_whitelist(&env, &client)?;
-
-        if milestones.len() == 0 || milestones.len() > 20 {
-            return Err(Error::InvalidMilestoneCount);
-        }
-
-        let mut total_amount: i128 = 0;
-        for i in 0..milestones.len() {
-            let m = milestones.get(i).unwrap();
-            total_amount += m.amount;
-        }
-
-        let count: u64 = env
-            .storage()
-            .instance()
-            .get(&DataKey::JobCount)
-            .unwrap_or(0);
-        let job_id = count + 1;
-        env.storage()
-            .instance()
-            .set(&DataKey::JobCount, &job_id);
-
-        let job = Job {
-            client: client.clone(),
-            freelancer: Address::from_string(&String::from_str(
-                &env,
-                "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
-            )),
-            amount: total_amount,
-            description_hash: desc_hash.clone(),
-            status: JobStatus::Open,
-            created_at: env.ledger().timestamp(),
-            deadline,
-            token,
-            revision_count: 0,
-        };
-        save_job(&env, job_id, &job);
-        env.storage()
-            .persistent()
-            .set(&DataKey::Milestones(job_id), &milestones);
-
-        env.events()
-            .publish(
-                (symbol_short!("JobPosted"),),
-                (job_id, client, desc_hash, total_amount),
-            );
-
-        Ok(job_id)
-    }
-
     pub fn approve_milestone(
         env: Env,
         client: Address,
@@ -1767,7 +1125,7 @@ mod test;
         (Symbol::new(e, "dispute_resolved"),),
         (job_id, resolution.client_bps),
     );
-}
+
 
 fn require_active_access(e: &Env, address: &Address) {
     if e.storage().persistent().get(&DataKey::Blacklisted(address.clone())).unwrap_or(false) {
