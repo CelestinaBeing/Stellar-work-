@@ -1126,6 +1126,12 @@ impl Escrow {
             return Err(Error::NotJobClient);
         }
 
+        // Only allow extensions for jobs that are currently InProgress
+        if job.status != JobStatus::InProgress {
+            return Err(Error::InvalidJobStatus);
+        }
+
+        // Optional freelancer consent must match the assigned freelancer when provided
         if freelancer_consent.len() > 0 {
             let consent_addr = freelancer_consent.get(0).unwrap();
             if consent_addr != job.freelancer {
@@ -1133,8 +1139,17 @@ impl Escrow {
             }
         }
 
+        // New deadline must be strictly after the current stored deadline
+        if new_deadline <= job.deadline {
+            return Err(Error::InvalidDeadline);
+        }
+
+        let old_deadline = job.deadline;
         job.deadline = new_deadline;
         save_job(&env, job_id, &job);
+
+        // Emit a dedicated event so indexers can pick up deadline changes
+        env.events().publish((symbol_short!("deadline_extended"),), (job_id, old_deadline, new_deadline));
 
         Ok(())
     }
