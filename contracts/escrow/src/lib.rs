@@ -241,6 +241,13 @@ pub struct SwapPreference {
 }
 
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct DiscountTier {
+    pub min_completed_jobs: u32,
+    pub discount_bps: u32, // Basis points (e.g., 500 = 5% discount off base fee, or reduced fee bps)
+}
+
+#[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
     Admin,
@@ -255,6 +262,9 @@ pub enum DataKey {
     Blacklisted(Address),
     WhitelistCount,
     TrustedForwarder(Address),
+    BaseFeeBps,
+    UserCompletedJobs(Address),
+    DiscountTiers,
     Fees,
     CompletedJobsCount,
     DescPayloadMax,
@@ -418,8 +428,10 @@ pub struct EscrowContract;
 impl EscrowContract {
     pub fn initialize(env: Env, admin: Address, native_token: Address) {
         if env.storage().instance().has(&DataKey::Admin) {
-            panic!("already initialized");
+            return;
         }
+        env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage().instance().set(&DataKey::BaseFeeBps, &250u32);
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::NativeToken, &native_token);
         env.storage().instance().set(&DataKey::JobCount, &0u64);
@@ -428,6 +440,86 @@ impl EscrowContract {
         env.storage().instance().set(&DataKey::Fees, &Fees { total_collected: 0 });
         env.storage().instance().set(&DataKey::AllowedTokenCount, &0u32);
         env.storage().instance().extend_ttl(10000, 10000);
+    }
+
+    pub fn set_discount_tiers(env: Env, tiers: Vec<DiscountTier>) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        env.storage().instance().set(&DataKey::DiscountTiers, &tiers);
+    }
+
+    /// Read user's completed jobs
+    pub fn get_user_completed_jobs(env: Env, user: Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::UserCompletedJobs(user))
+            .unwrap_or(0)
+    }
+
+    /// Read configured discount tiers
+    pub fn get_discount_tiers(env: Env) -> Vec<DiscountTier> {
+        env.storage()
+            .instance()
+            .get(&DataKey::DiscountTiers)
+            .unwrap_or(Vec::new(&env))
+    }
+
+    /// Calculate effective fee basis points for a given user
+    pub fn calculate_effective_fee_bps(env: Env, user: Address) -> u32 {
+        let base_fee: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::BaseFeeBps)
+            .unwrap_or(250);
+
+        let completed_jobs = Self::get_user_completed_jobs(env.clone(), user);
+        let tiers = Self::get_discount_tiers(env.clone());
+
+        let mut discount_bps = 0u32;
+        for tier in tiers.iter() {
+            if completed_jobs >= tier.min_completed_jobs {
+                discount_bps = tier.discount_bps;
+            }
+        }
+
+        base_fee.saturating_sub(discount_bps)
+    }
+
+    /// Approve work, calculate discounted fee, payout freelancer, and increment completion count
+    pub fn approve_work(
+        env: Env,
+        client: Address,
+        freelancer: Address,
+        token: Address,
+        amount: i128,
+    ) {
+        client.require_auth();
+
+        // 1. Calculate effective fee for freelancer (or client based on spec)
+        let effective_fee_bps = Self::calculate_effective_fee_bps(env.clone(), freelancer.clone());
+        
+        let platform_fee = (amount * effective_fee_bps as i128) / 10_000;
+        let freelancer_payout = amount - platform_fee;
+
+        let token_client = token::Client::new(&env, &token);
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+
+        // 2. Perform token transfers
+        if platform_fee > 0 {
+            token_client.transfer(&env.current_contract_address(), &admin, &platform_fee);
+        }
+        token_client.transfer(&env.current_contract_address(), &freelancer, &freelancer_payout);
+
+        // 3. Increment user completed job count
+        let current_count = Self::get_user_completed_jobs(env.clone(), freelancer.clone());
+        let new_count = current_count + 1;
+
+        let key = DataKey::UserCompletedJobs(freelancer.clone());
+        env.storage().persistent().set(&key, &new_count);
+
+        // Extend TTL for persistent key so completion data persists long-term
+        env.storage().persistent().extend_ttl(&key, 100_000, 200_000);
     }
 
     pub fn set_desc_payload_max(env: Env, max: u32) {
@@ -439,19 +531,19 @@ impl EscrowContract {
         env.storage().instance().get(&DataKey::DescPayloadMax).unwrap_or(MAX_DESC_PAYLOAD)
     }
 
-fn get_job(env: &Env, job_id: u64) -> Job {
-    env.storage()
-        .persistent()
-        .get(&DataKey::Job(job_id))
-        .expect("Job not found")
-}
+    fn get_job(env: &Env, job_id: u64) -> Job {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Job(job_id))
+            .expect("Job not found")
+    }
 
-fn save_job(env: &Env, job_id: u64, job: &Job) {
-    env.storage().persistent().set(&DataKey::Job(job_id), job);
-}
+    fn save_job(env: &Env, job_id: u64, job: &Job) {
+        env.storage().persistent().set(&DataKey::Job(job_id), job);
+    }
 
-fn increment_completed_count(env: &Env) {
-    let current: u64 = env
+    fn increment_completed_count(env: &Env) {
+        let current: u64 = env
         .storage()
         .instance()
         .get(&DataKey::CompletedJobsCount)
@@ -459,37 +551,37 @@ fn increment_completed_count(env: &Env) {
     env.storage()
         .instance()
         .set(&DataKey::CompletedJobsCount, &(current + 1));
-}
-
-fn check_whitelist(env: &Env, address: &Address) -> Result<(), Error> {
-    let is_blacklisted: bool = env
-        .storage()
-        .instance()
-        .get(&DataKey::Blacklist(address.clone()))
-        .unwrap_or(false);
-    if is_blacklisted {
-        return Err(Error::Blacklisted);
     }
 
-    let whitelist_mode: bool = env
-        .storage()
-        .instance()
-        .get(&DataKey::WhitelistMode)
-        .unwrap_or(false);
-    if whitelist_mode {
-        let is_whitelisted: bool = env
+    fn check_whitelist(env: &Env, address: &Address) -> Result<(), Error> {
+        let is_blacklisted: bool = env
             .storage()
             .instance()
-            .get(&DataKey::Whitelist(address.clone()))
+            .get(&DataKey::Blacklist(address.clone()))
             .unwrap_or(false);
-        if !is_whitelisted {
-            return Err(Error::NotWhitelisted);
+        if is_blacklisted {
+            return Err(Error::Blacklisted);
         }
+
+        let whitelist_mode: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::WhitelistMode)
+            .unwrap_or(false);
+        if whitelist_mode {
+            let is_whitelisted: bool = env
+                .storage()
+                .instance()
+                .get(&DataKey::Whitelist(address.clone()))
+                .unwrap_or(false);
+            if !is_whitelisted {
+                return Err(Error::NotWhitelisted);
+            }
+        }
+
+        Ok(())
     }
-
-    Ok(())
 }
-
 #[contract]
 pub struct Escrow;
 
@@ -772,26 +864,12 @@ impl Escrow {
         put_job(&env, job_id, &job);
     }
 
-    pub fn resolve_dispute(env: Env, admin: Address, job_id: u64, winner: Address) {
-        admin.require_auth();
-        require_admin(&env);
-        let mut job = get_job(&env, job_id);
-        if job.status != JobStatus::Disputed { panic!("job not disputed"); }
-        let fee = job.amount * PLATFORM_FEE_BPS as i128 / 10000;
-        let payout = job.amount - fee;
-        let mut fees: Fees = env.storage().instance().get(&DataKey::Fees).unwrap_or(Fees { total_collected: 0 });
-        fees.total_collected += fee;
-        env.storage().instance().set(&DataKey::Fees, &fees);
-
-        let token = token::Client::new(&env, &job.token);
-        token.transfer(&env.current_contract_address(), &winner, &payout);
-        job.status = JobStatus::Completed;
-        put_job(&env, job_id, &job);
-        desc_hash: Bytes,
-        description_payload_len: u32,
-        deadline: u64,
-        token: Address,
-    ) -> Result<u64, Error> {
+    pub fn resolve_dispute(
+        env: Env,
+        admin: Address,
+        job_id: u64,
+        winner: Address,
+    ) -> Result<(), Error> {
         client.require_auth();
         check_whitelist(&env, &client)?;
 
@@ -1234,10 +1312,12 @@ impl Escrow {
         put_job(&env, job_id, &job);
     }
 
-    pub fn store_description_cid(env: Env, caller: Address, _job_id: u64, _cid: Bytes) {
-        caller.require_auth();
+    // ✅ CORRECT:
+    pub fn store_description_cid(
+        env: Env,
+        caller: Address,
         job_id: u64,
-        client_payout_bps: u32,
+        cid: Bytes,
     ) -> Result<(), Error> {
         check_admin(&env);
 
@@ -1641,7 +1721,10 @@ impl Escrow {
     }
 }
 
-mod test;
+    pub fn create_job_with_milestones(
+        env: Env,
+        client: Address,
+        milestones: Vec<Milestone>,
         desc_hash: Bytes,
         _description_payload_len: u32,
         deadline: u64,
@@ -1767,7 +1850,7 @@ mod test;
         (Symbol::new(e, "dispute_resolved"),),
         (job_id, resolution.client_bps),
     );
-}
+
 
 fn require_active_access(e: &Env, address: &Address) {
     if e.storage().persistent().get(&DataKey::Blacklisted(address.clone())).unwrap_or(false) {
