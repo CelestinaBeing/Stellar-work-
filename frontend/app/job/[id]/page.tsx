@@ -7,6 +7,7 @@ import { useToast } from "@/components/ToastProvider";
 import StatusPill from "@/components/StatusPill";
 import ShareButton from "@/components/ShareButton";
 import RichTextRenderer, { isRichText, PlainTextRenderer } from "@/components/RichTextRenderer";
+import { verifyHtmlMatchesHash } from "@/lib/crypto";
 import { useNotifications } from "@/lib/notifications-context";
 import { acceptJob, approveWork, cancelJob, freelancerCancelJob, getDescriptionCid, getJob, submitWork } from "@/lib/contract";
 import { fetchFromIpfs } from "@/lib/ipfs-service";
@@ -119,14 +120,29 @@ export default function JobDetailPage() {
         const hash = data.description_hash;
         const stored = localStorage.getItem(`job-desc:${hash}`);
         if (stored) {
-          setDescription(stored);
+          try {
+            const ok = await verifyHtmlMatchesHash(stored, hash);
+            if (ok) {
+              setDescription(stored);
+            } else {
+              // Integrity mismatch — ignore stored value
+              setDescription(null);
+            }
+          } catch {
+            setDescription(null);
+          }
         } else {
           try {
             const cid = await getDescriptionCid(hash);
             if (cid) {
               const text = await fetchFromIpfs(cid);
-              setDescription(text);
-              localStorage.setItem(`job-desc:${hash}`, text);
+              const ok = await verifyHtmlMatchesHash(text, hash);
+              if (ok) {
+                setDescription(text);
+                localStorage.setItem(`job-desc:${hash}`, text);
+              } else {
+                setDescription(null);
+              }
             }
           } catch {
             setDescription(null);
