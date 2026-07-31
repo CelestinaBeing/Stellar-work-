@@ -1,6 +1,12 @@
 #![cfg(test)]
 use super::*;
-use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, vec, IntoVal};
+use soroban_sdk::{
+    testutils::Address as _,
+    testutils::Events,
+    testutils::Ledger as _,
+    vec,
+    IntoVal,
+};
 
 #[allow(deprecated)]
 fn setup_test(env: &Env) -> (Address, Address, Address, Address, Address) {
@@ -350,7 +356,11 @@ fn test_sla_config_creation() {
     assert_eq!(job_id, 1);
 
     let status = escrow.get_sla_status(&job_id);
-    assert_eq!(status.config, Some(sla_config));
+    assert!(status.has_config);
+    assert_eq!(status.response_time_ledgers, sla_config.response_time_ledgers);
+    assert_eq!(status.delivery_time_ledgers, sla_config.delivery_time_ledgers);
+    assert_eq!(status.penalty_bps, sla_config.penalty_bps);
+    assert_eq!(status.auto_escalate, sla_config.auto_escalate);
     assert_eq!(status.accepted_at, 0);
     assert!(!status.breached);
     assert!(!status.penalty_applied);
@@ -359,6 +369,7 @@ fn test_sla_config_creation() {
 #[test]
 fn test_sla_get_sla_status_returns_correct_values() {
     let env = Env::default();
+    env.ledger().set_sequence_number(1);
     let (admin, client, freelancer, token, contract_id) = setup_test(&env);
     let escrow = new_escrow(&env, &contract_id);
     let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
@@ -379,7 +390,9 @@ fn test_sla_get_sla_status_returns_correct_values() {
     escrow.accept_job(&freelancer, &job_id);
     let status_after_accept = escrow.get_sla_status(&job_id);
     assert!(status_after_accept.accepted_at > 0);
-    assert_eq!(status_after_accept.config, Some(sla_config));
+    assert!(status_after_accept.has_config);
+    assert_eq!(status_after_accept.response_time_ledgers, sla_config.response_time_ledgers);
+    assert_eq!(status_after_accept.delivery_time_ledgers, sla_config.delivery_time_ledgers);
     assert!(!status_after_accept.breached);
 
     let current = env.ledger().sequence();
@@ -394,6 +407,7 @@ fn test_sla_get_sla_status_returns_correct_values() {
 #[test]
 fn test_sla_penalty_applied_on_late_delivery() {
     let env = Env::default();
+    env.ledger().set_sequence_number(1);
     let (admin, client, freelancer, token, contract_id) = setup_test(&env);
     let escrow = new_escrow(&env, &contract_id);
     let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
@@ -429,6 +443,7 @@ fn test_sla_penalty_applied_on_late_delivery() {
 #[test]
 fn test_sla_breach_event_emitted() {
     let env = Env::default();
+    env.ledger().set_sequence_number(1);
     let (admin, client, freelancer, token, contract_id) = setup_test(&env);
     let escrow = new_escrow(&env, &contract_id);
     let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
@@ -453,4 +468,37 @@ fn test_sla_breach_event_emitted() {
     let post_events = env.events().all().len();
 
     assert!(post_events > pre_events, "SLA breach should emit an event");
+}
+
+#[test]
+fn test_get_freelancer_jobs() {
+    let env = Env::default();
+    let (_admin, client, freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let deadline: u64 = 1000;
+
+    // No jobs initially
+    let initial_jobs = escrow.get_freelancer_jobs(&freelancer);
+    assert_eq!(initial_jobs.len(), 0);
+
+    // Post and accept first job
+    let job_id_1 = escrow.post_job(&client, &100_0000000i128, &desc_hash, &100u32, &deadline, &token);
+    escrow.accept_job(&freelancer, &job_id_1);
+    let jobs_after_one = escrow.get_freelancer_jobs(&freelancer);
+    assert_eq!(jobs_after_one.len(), 1);
+    assert_eq!(jobs_after_one.get(0).unwrap(), job_id_1);
+
+    // Post and accept second job
+    let job_id_2 = escrow.post_job(&client, &200_0000000i128, &desc_hash, &100u32, &deadline, &token);
+    escrow.accept_job(&freelancer, &job_id_2);
+    let jobs_after_two = escrow.get_freelancer_jobs(&freelancer);
+    assert_eq!(jobs_after_two.len(), 2);
+    assert_eq!(jobs_after_two.get(0).unwrap(), job_id_1);
+    assert_eq!(jobs_after_two.get(1).unwrap(), job_id_2);
+
+    // Different freelancer should have empty jobs
+    let other_freelancer = Address::generate(&env);
+    let other_jobs = escrow.get_freelancer_jobs(&other_freelancer);
+    assert_eq!(other_jobs.len(), 0);
 }
