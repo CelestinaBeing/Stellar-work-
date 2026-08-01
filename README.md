@@ -250,8 +250,9 @@ The frontend is deployed to Vercel automatically:
 - **Production** — every push to `main` that changes `frontend/**` triggers a production deployment.
 - **Preview** — every pull request gets a unique preview URL, posted as a comment by the GitHub Actions bot.
 
-See [docs/DEPLOY.md](docs/DEPLOY.md) for the full setup guide (creating the Vercel project, required GitHub secrets, environment variable configuration, and troubleshooting).
+See [docs/DEPLOY.md](docs/DEPLOY.md) for the Vercel CI/CD setup guide (creating the Vercel project, required GitHub secrets, environment variable configuration, and troubleshooting).
 
+For hosting the frontend on Vercel, Netlify, or Docker (plus production env configuration), see [docs/FRONTEND_DEPLOYMENT.md](docs/FRONTEND_DEPLOYMENT.md).
 For a command-only deployment reference, see `docs/testnet-deployment-guide.md`.
 For environment configuration, see `docs/environments.md`.
 For API reference, see `docs/CONTRACT.md`.
