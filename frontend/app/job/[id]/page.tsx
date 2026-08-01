@@ -5,6 +5,7 @@ import InfoTooltip from "@/components/InfoTooltip";
 import LoadingState from "@/components/LoadingState";
 import { useToast } from "@/components/ToastProvider";
 import StatusPill from "@/components/StatusPill";
+import ShareButton from "@/components/ShareButton";
 import RichTextRenderer, { isRichText, PlainTextRenderer } from "@/components/RichTextRenderer";
 import { useNotifications } from "@/lib/notifications-context";
 import { acceptJob, approveWork, cancelJob, freelancerCancelJob, getDescriptionCid, getJob, submitWork } from "@/lib/contract";
@@ -23,12 +24,53 @@ import { getExplorerTxUrl } from "@/lib/stellar";
 import { isConfirmSuppressed, CONFIRM_KEYS } from "@/lib/confirm-prefs";
 import type { Job } from "@/lib/types";
 import { useWallet } from "@/lib/wallet-context";
+import { useMeetings } from "@/lib/meetings-context";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 type PendingAction = "cancelJob" | "approveWork" | "submitWork" | "freelancerCancelJob";
 
 const BOOKMARK_STORAGE_KEY = "stellarwork:bookmarked-jobs";
+
+function getAutoApprovalCountdown(submittedAtStr: string | undefined) {
+  if (!submittedAtStr) return null;
+  const submittedAtNum = Number(submittedAtStr);
+  if (!submittedAtNum || isNaN(submittedAtNum)) return null;
+
+  const APPROVAL_WINDOW = 14 * 24 * 60 * 60; // 14 days in seconds
+  const autoApproveTime = (submittedAtNum + APPROVAL_WINDOW) * 1000;
+  const now = Date.now();
+  const diff = autoApproveTime - now;
+
+  if (diff <= 0) {
+    return {
+      expired: true,
+      text: "The 14-day approval window has expired. Payment can now be automatically released to the freelancer.",
+    };
+  }
+
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+  let timeStr = "";
+  if (days > 0) {
+    timeStr += `${days} day${days > 1 ? "s" : ""}`;
+  }
+  if (hours > 0) {
+    if (timeStr) timeStr += ", ";
+    timeStr += `${hours} hour${hours > 1 ? "s" : ""}`;
+  }
+  if (days === 0 && minutes > 0) {
+    if (timeStr) timeStr += ", ";
+    timeStr += `${minutes} minute${minutes > 1 ? "s" : ""}`;
+  }
+
+  return {
+    expired: false,
+    text: `Payment will be automatically released to the freelancer in ${timeStr} if you do not take action.`,
+  };
+}
 
 export default function JobDetailPage() {
   const params = useParams<{ id: string }>();
@@ -50,6 +92,13 @@ export default function JobDetailPage() {
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [bookmarkAnimating, setBookmarkAnimating] = useState(false);
+  const [statusAnnouncement, setStatusAnnouncement] = useState("");
+  const { proposeMeeting, getMeetingsForJob } = useMeetings();
+  const [showScheduleForm, setShowScheduleForm] = useState(false);
+  const [meetingTitle, setMeetingTitle] = useState("");
+  const [slotDate, setSlotDate] = useState("");
+  const [slotStart, setSlotStart] = useState("");
+  const [slotEnd, setSlotEnd] = useState("");
 
   const numericId = Number(id);
   const isIdValid = !isNaN(numericId) && numericId > 0 && Number.isInteger(numericId);
@@ -177,6 +226,7 @@ export default function JobDetailPage() {
       }
       await load();
       showSuccess(successMessage);
+      setStatusAnnouncement(successMessage);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Transaction failed.";
       setError(message);
@@ -400,6 +450,11 @@ export default function JobDetailPage() {
 
   return (
     <section className="space-y-6 pb-6 sm:pb-6">
+      {/* Screen reader announcer for job status transitions */}
+      <p role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {statusAnnouncement}
+      </p>
+
       <div className="flex items-center gap-4">
         <Link href="/" className="text-sm text-blue-600 hover:underline">
           Back
@@ -408,7 +463,7 @@ export default function JobDetailPage() {
       </div>
 
       {error && (
-        <p role="alert" className="rounded-md bg-red-100 p-3 text-sm text-red-700">
+        <p role="alert" aria-live="assertive" aria-atomic="true" className="rounded-md bg-red-100 p-3 text-sm text-red-700">
           {error}
         </p>
       )}
@@ -426,12 +481,40 @@ export default function JobDetailPage() {
         </p>
       )}
 
+      {job.status === "SubmittedForReview" && (() => {
+        const countdown = getAutoApprovalCountdown(job.submitted_at);
+        if (!countdown) return null;
+        return (
+          <div className={`rounded-lg border p-4 text-sm ${
+            countdown.expired
+              ? "border-red-200 bg-red-50 text-red-800"
+              : "border-amber-200 bg-amber-50 text-amber-800"
+          }`}>
+            <div className="flex items-start gap-3">
+              <svg className="h-5 w-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <div>
+                <h4 className="font-semibold">{isClient ? "Action Required: Review Submitted Work" : "Work Under Review"}</h4>
+                <p className="mt-1 text-xs opacity-90">{countdown.text}</p>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       <article className="space-y-2 rounded-lg border border-slate-200 bg-white p-5 text-sm">
         <div className="flex items-center justify-between gap-2">
           <p>
             <strong>Status:</strong> <StatusPill status={job.status} />
           </p>
-          <button
+          <div className="flex items-center gap-2">
+            <ShareButton
+              jobId={id}
+              jobTitle={`Job #${id}`}
+              jobAmount={formatXlmWithFiat(job.amount, fiatCurrency, fiatRates?.rates)}
+            />
+            <button
             type="button"
             onClick={toggleBookmark}
             className={`rounded-md border px-3 py-1.5 text-sm font-medium transition-all duration-200 ${
@@ -444,6 +527,7 @@ export default function JobDetailPage() {
           >
             {isBookmarked ? "★ Saved" : "☆ Save"}
           </button>
+          </div>
         </div>
         <p>
           <strong>Client:</strong> {job.client}
@@ -524,11 +608,10 @@ export default function JobDetailPage() {
           const otherParty =
             wallet === job.client ? job.freelancer :
             wallet === job.freelancer ? job.client :
-            // Visitor: can message the client
             job.client;
           if (!otherParty || otherParty === wallet) return null;
           return (
-            <div className="pt-1">
+            <div className="flex flex-wrap gap-2 pt-1">
               <Link
                 href={`/messages/${otherParty}`}
                 className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
@@ -538,6 +621,120 @@ export default function JobDetailPage() {
                 </svg>
                 Message {wallet === job.client ? "Freelancer" : wallet === job.freelancer ? "Client" : "Client"}
               </Link>
+              <button
+                type="button"
+                onClick={() => setShowScheduleForm(!showScheduleForm)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
+                </svg>
+                {showScheduleForm ? "Cancel" : "Schedule Meeting"}
+              </button>
+            </div>
+          );
+        })()}
+
+        {/* Schedule meeting form */}
+        {showScheduleForm && wallet && (() => {
+          const otherParty =
+            wallet === job.client ? job.freelancer :
+            wallet === job.freelancer ? job.client :
+            job.client;
+          if (!otherParty) return null;
+          return (
+            <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm">
+              <h4 className="font-medium text-slate-800 mb-3">Propose a Meeting</h4>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Meeting title</label>
+                  <input
+                    type="text"
+                    value={meetingTitle}
+                    onChange={(e) => setMeetingTitle(e.target.value)}
+                    placeholder="e.g. Project kickoff call"
+                    className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Date</label>
+                    <input
+                      type="date"
+                      value={slotDate}
+                      onChange={(e) => setSlotDate(e.target.value)}
+                      className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">Start time</label>
+                    <input
+                      type="time"
+                      value={slotStart}
+                      onChange={(e) => setSlotStart(e.target.value)}
+                      className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">End time</label>
+                    <input
+                      type="time"
+                      value={slotEnd}
+                      onChange={(e) => setSlotEnd(e.target.value)}
+                      className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={!meetingTitle || !slotDate || !slotStart || !slotEnd}
+                  onClick={() => {
+                    const start = `${slotDate}T${slotStart}:00`;
+                    const end = `${slotDate}T${slotEnd}:00`;
+                    proposeMeeting(
+                      numericId,
+                      meetingTitle,
+                      [{ start, end }],
+                      wallet,
+                      otherParty,
+                    );
+                    setMeetingTitle("");
+                    setSlotDate("");
+                    setSlotStart("");
+                    setSlotEnd("");
+                    setShowScheduleForm(false);
+                  }}
+                  className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Send Proposal
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Show existing meetings for this job */}
+        {wallet && (() => {
+          const jobMeetings = getMeetingsForJob(numericId);
+          if (jobMeetings.length === 0) return null;
+          return (
+            <div className="mt-3 space-y-2">
+              <h4 className="text-xs font-medium text-slate-600 uppercase tracking-wider">Meetings</h4>
+              {jobMeetings.map((m) => (
+                <div key={m.id} className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-3 py-2 text-xs">
+                  <div>
+                    <span className="font-medium text-slate-800">{m.title}</span>
+                    <span className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                      m.status === "confirmed" ? "bg-green-100 text-green-700" :
+                      m.status === "pending" ? "bg-amber-100 text-amber-700" :
+                      "bg-slate-100 text-slate-500"
+                    }`}>
+                      {m.status}
+                    </span>
+                  </div>
+                  <Link href="/meetings" className="text-blue-600 hover:underline">View</Link>
+                </div>
+              ))}
             </div>
           );
         })()}

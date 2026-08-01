@@ -50,3 +50,19 @@ jobs:
       - name: Run tests
         working-directory: contracts/escrow/
         run: cargo test
+
+      - name: Install cargo-tarpaulin
+        run: |
+          if ! command -v cargo-tarpaulin &> /dev/null; then
+            cargo install cargo-tarpaulin
+          fi
+
+      - name: Run contract test coverage
+        run: ./contracts/coverage.sh
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: coverage/lcov.info
+          fail_ci_if_error: true
+          verbose: true

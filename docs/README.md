@@ -8,6 +8,7 @@ Index of project documentation. Start with the [root README](../README.md) for s
 |----------|-------------|
 | [contributor-onboarding-checklist.md](./contributor-onboarding-checklist.md) | First-time contributor setup and first PR checklist |
 | [CONTRIBUTING.md](../CONTRIBUTING.md) | Branching, PR requirements, labels, and pre-commit hooks |
+| [TRANSLATING.md](./TRANSLATING.md) | How to add or maintain locale translations |
 | [glossary.md](./glossary.md) | Contract and frontend terminology |
 | [VIDEO_TUTORIALS.md](./VIDEO_TUTORIALS.md) | Screencast recording guide, script template, official tutorial series outline, and captioning standards |
 
@@ -38,6 +39,8 @@ Index of project documentation. Start with the [root README](../README.md) for s
 | [OPS_RUNBOOK.md](./OPS_RUNBOOK.md) | Operations runbook: monitoring, backups, incident response, contract upgrades, and maintenance |
 | [PRODUCTION_CHECKLIST.md](./PRODUCTION_CHECKLIST.md) | Pre-launch checklist covering code, infrastructure, contract deploy, E2E verification, and sign-off |
 | [testing-matrix.md](./testing-matrix.md) | Unit, integration, and E2E test coverage and commands |
+| [TESTING_MATRIX.md](./TESTING_MATRIX.md) | Cross-browser testing matrix: supported browsers, devices, and manual checklists |
+| [TOKENOMICS.md](./TOKENOMICS.md) | Platform fee structure, revenue flow, and economic model |
 | [release-checklist.md](./release-checklist.md) | Pre-release verification steps |
 | [release-notes-guide.md](./release-notes-guide.md) | How to write release notes entries |
 | [troubleshooting.md](./troubleshooting.md) | Common errors and fixes |
