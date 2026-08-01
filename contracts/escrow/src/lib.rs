@@ -11,6 +11,7 @@ const MAX_FEE_BPS: i128 = 1_000;
 const MAX_FEE_BPS_CONFIG: i128 = 10_000;
 const MAX_REVISIONS: u32 = 3;
 const CONTRACT_VERSION: u32 = 1;
+pub const INITIAL_JOB_VERSION: u32 = 1;
 const DEFAULT_DESCRIPTION_PAYLOAD_MAX_BYTES: u32 = 4096;
 const MIN_DESCRIPTION_PAYLOAD_MAX_BYTES: u32 = 32;
 const MAX_DESCRIPTION_PAYLOAD_MAX_BYTES: u32 = 65_536;
@@ -334,7 +335,7 @@ impl EscrowContract {
         let job_token = token.clone();
         let job_client = client.clone();
         let job = Job {
-            version: 1,
+            version: INITIAL_JOB_VERSION,
             client: job_client,
             freelancer: Option::None,
             amount,
