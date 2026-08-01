@@ -20,6 +20,7 @@ import {
 import {
   type StellarNetwork,
   getPersistedNetwork,
+  getExplicitNetwork,
   getNetworkConfig,
 } from "@/lib/network-config";
 
@@ -39,8 +40,7 @@ const getRpcUrl = () => getNetworkConfig(getActiveNetwork()).rpcUrl;
 export type { StellarNetwork };
 
 export function getConfiguredNetwork(): StellarNetwork | null {
-  const network = getActiveNetwork();
-  return network;
+  return getExplicitNetwork();
 }
 
 const getNetworkPassphrase = () => getNetworkConfig(getActiveNetwork()).passphrase;

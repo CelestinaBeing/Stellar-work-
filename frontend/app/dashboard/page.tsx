@@ -521,7 +521,7 @@ export default function DashboardPage() {
             onBatchApprove={handleBatchApprove}
             batchLoading={batchLoading}
             selectedJobIds={selectedJobIds}
-            onToggleSelect={handleToggleSelect}
+            onToggleBulkCancelSelect={handleToggleSelect}
             onSelectAll={handleSelectAllOpen}
             onDeselectAll={handleDeselectAll}
             onBulkCancel={() => setShowBulkConfirm(true)}
@@ -708,7 +708,7 @@ function JobSection({
   onBatchApprove,
   batchLoading,
   selectedJobIds = new Set(),
-  onToggleSelect,
+  onToggleBulkCancelSelect,
   onSelectAll,
   onDeselectAll,
   onBulkCancel,
@@ -729,18 +729,28 @@ function JobSection({
   onToggleSelect?: (id: number) => void;
   onBatchApprove?: () => void;
   batchLoading?: boolean;
+  selectedJobIds?: Set<number>;
+  onToggleBulkCancelSelect?: (id: number) => void;
+  onSelectAll?: () => void;
+  onDeselectAll?: () => void;
+  onBulkCancel?: () => void;
+  bulkCancelProgress?: { done: number; total: number; failed: number[] } | null;
 }) {
   const pendingReviewIds = allJobs
     .filter((j) => j.job.status === "SubmittedForReview")
     .map((j) => j.id);
   const hasPendingReview = pendingReviewIds.length > 0;
 
+  const openClientJobs = role === "client" ? jobs.filter((j) => j.job.status === "Open") : [];
+  const selectionCount = openClientJobs.filter((j) => selectedJobIds.has(j.id)).length;
+  const allOpenSelected = openClientJobs.length > 0 && openClientJobs.every((j) => selectedJobIds.has(j.id));
+
   return (
     <div>
-      <div className="flex items-center justify-between">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-lg font-semibold">{title}</h2>
-          <p className="mb-3 text-sm text-slate-500">{subtitle}</p>
+          <p className="text-sm text-slate-500">{subtitle}</p>
         </div>
         {role === "client" && hasPendingReview && (
           <div className="flex items-center gap-2">
@@ -755,24 +765,8 @@ function JobSection({
             >
               {batchLoading ? "Approving..." : `Approve Selected (${selectedJobs?.size ?? 0})`}
             </button>
-  selectedJobIds?: Set<number>;
-  onToggleSelect?: (id: number) => void;
-  onSelectAll?: () => void;
-  onDeselectAll?: () => void;
-  onBulkCancel?: () => void;
-  bulkCancelProgress?: { done: number; total: number; failed: number[] } | null;
-}) {
-  const openClientJobs = role === "client" ? jobs.filter((j) => j.job.status === "Open") : [];
-  const selectionCount = openClientJobs.filter((j) => selectedJobIds.has(j.id)).length;
-  const allOpenSelected = openClientJobs.length > 0 && openClientJobs.every((j) => selectedJobIds.has(j.id));
-
-  return (
-    <div>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="text-lg font-semibold">{title}</h2>
-          <p className="text-sm text-slate-500">{subtitle}</p>
-        </div>
+          </div>
+        )}
         {/* Bulk cancel controls — client only, at least 1 open job */}
         {role === "client" && openClientJobs.length > 0 && (
           <div className="flex items-center gap-2">
@@ -797,7 +791,9 @@ function JobSection({
         )}
       </div>
       {jobs.length === 0 ? (
-        filterActive && allJobs.length > 0 ? (
+        // The filter-empty CTA renders once (client section) instead of
+        // duplicating an identical message/button across both sections.
+        filterActive && allJobs.length > 0 && role === "client" ? (
           <NoResultsState
             title="No jobs match this filter"
             description="Try a different status or clear the filter to show every job in this section."
@@ -811,23 +807,6 @@ function JobSection({
           />
         )
       ) : (
-          <ul className="grid list-none gap-4 sm:grid-cols-2" aria-label={title}>
-            {jobs.map(({ id, job }) => (
-              <li key={id}>
-                <JobCard
-                  id={id}
-                  job={job}
-                  wallet={wallet}
-                  role={role}
-                  isLoading={actionLoading === id}
-                  onAction={onAction}
-                  onRequestCancel={onRequestCancel}
-                  isSelected={selectedJobs?.has(id) ?? false}
-                  onToggleSelect={role === "client" ? onToggleSelect : undefined}
-                />
-              </li>
-            ))}
-          </ul>
         <ul className="grid list-none gap-4 sm:grid-cols-2" aria-label={title}>
           {jobs.map(({ id, job }) => (
             <li key={id}>
@@ -839,8 +818,10 @@ function JobSection({
                 isLoading={actionLoading === id}
                 onAction={onAction}
                 onRequestAction={onRequestAction}
-                isSelected={selectedJobIds.has(id)}
-                onToggleSelect={job.status === "Open" && role === "client" ? onToggleSelect : undefined}
+                isSelected={selectedJobs?.has(id) ?? false}
+                onToggleSelect={role === "client" && job.status === "SubmittedForReview" ? onToggleSelect : undefined}
+                isBulkCancelSelected={selectedJobIds.has(id)}
+                onToggleBulkCancelSelect={role === "client" && job.status === "Open" ? onToggleBulkCancelSelect : undefined}
               />
             </li>
           ))}
@@ -857,11 +838,11 @@ function JobCard({
   role,
   isLoading,
   onAction,
-  onRequestCancel,
-  isSelected,
   onRequestAction,
   isSelected = false,
   onToggleSelect,
+  isBulkCancelSelected = false,
+  onToggleBulkCancelSelect,
 }: {
   id: number;
   job: Job;
@@ -869,34 +850,39 @@ function JobCard({
   role: "client" | "freelancer";
   isLoading: boolean;
   onAction: (fn: () => Promise<unknown>, jobId: number, notification?: { event: NotificationEvent; message: string }) => Promise<void>;
-  onRequestCancel: (jobId: number) => void;
   onRequestAction: (type: PendingDashAction["type"], jobId: number, amountXlm: string) => void;
   isSelected?: boolean;
   onToggleSelect?: (id: number) => void;
+  isBulkCancelSelected?: boolean;
+  onToggleBulkCancelSelect?: (id: number) => void;
 }) {
   const actions = getActions(id, job, wallet, role);
   const amountXlm = `${toXlm(job.amount)} XLM`;
+  const selectionRing = isSelected
+    ? "ring-2 ring-emerald-400"
+    : isBulkCancelSelected
+      ? "ring-2 ring-red-400"
+      : "";
 
   return (
-    <article className={`interactive-card h-full p-4 ${isSelected ? "ring-2 ring-emerald-400" : ""}`}>
+    <article className={`interactive-card h-full p-4 ${selectionRing}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2">
           {onToggleSelect && job.status === "SubmittedForReview" && (
             <input
               type="checkbox"
-              checked={isSelected ?? false}
+              checked={isSelected}
               onChange={() => onToggleSelect(id)}
               className="h-4 w-4 rounded border-slate-300 text-emerald-600"
               aria-label={`Select Job #${id} for batch approval`}
-    <article className={`interactive-card h-full p-4 ${isSelected ? "ring-2 ring-red-400" : ""}`}>
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2">
-          {onToggleSelect && (
+            />
+          )}
+          {onToggleBulkCancelSelect && (
             <input
               type="checkbox"
               aria-label={`Select Job #${id} for bulk cancellation`}
-              checked={isSelected}
-              onChange={() => onToggleSelect(id)}
+              checked={isBulkCancelSelected}
+              onChange={() => onToggleBulkCancelSelect(id)}
               className="h-4 w-4 rounded border-slate-300 accent-red-600 cursor-pointer"
             />
           )}

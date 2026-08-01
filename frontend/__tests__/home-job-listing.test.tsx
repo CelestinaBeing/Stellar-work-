@@ -3,6 +3,22 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import HomePage from "@/app/page";
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({
+    push: vi.fn(),
+    replace: vi.fn(),
+    back: vi.fn(),
+    forward: vi.fn(),
+    refresh: vi.fn(),
+    prefetch: vi.fn(),
+  }),
+  usePathname: () => "/",
+  useSearchParams: () => ({
+    get: vi.fn().mockReturnValue(null),
+    toString: vi.fn().mockReturnValue(""),
+  }),
+}));
+
 const mockGetJobCount = vi.fn();
 const mockGetJob = vi.fn();
 
@@ -105,7 +121,7 @@ describe("Home page job listing after getJobCount", () => {
         freelancer: null,
         amount: "10000000",
         description_hash: "hash-one",
-        status: "Open",
+        status: "Completed",
         created_at: "1710000002",
         deadline: "0",
         token: "GTOKEN",
@@ -127,7 +143,7 @@ describe("Home page job listing after getJobCount", () => {
         freelancer: null,
         amount: "30000000",
         description_hash: "hash-three",
-        status: "Completed",
+        status: "Open",
         created_at: "1710000000",
         deadline: "0",
         token: "GTOKEN",
