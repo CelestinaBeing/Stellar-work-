@@ -3,6 +3,7 @@
 import ErrorBanner from "@/components/ErrorBanner";
 import EmptyState from "@/components/EmptyState";
 import InfoTooltip from "@/components/InfoTooltip";
+import LoadingState from "@/components/LoadingState";
 import NoResultsState from "@/components/NoResultsState";
 import JobCardSkeleton from "@/components/JobCardSkeleton";
 import SectionCard from "@/components/SectionCard";
@@ -531,7 +532,7 @@ export default function HomePage() {
 
       {loading && jobs.length === 0 && (
         <div className="space-y-4">
-          <p className="text-sm text-slate-600">Loading jobs...</p>
+          <LoadingState text="Loading jobs..." />
           <div
             className={viewMode === "list" ? "flex flex-col gap-4" : "grid gap-4 md:grid-cols-2"}
             aria-label="Loading open jobs"
