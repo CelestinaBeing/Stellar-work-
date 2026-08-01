@@ -123,15 +123,42 @@ html {
   --color-slate-600: #334155;
 }
 
+/* ── Keyboard navigation (#445) ─────────────────────────────────────────────
+   Consistent, high-contrast focus rings for all interactive elements.
+   Using :focus-visible so mouse users are not distracted by focus rings.     */
 @layer base {
   button:focus-visible,
   a:focus-visible,
   input:focus-visible,
   select:focus-visible,
   textarea:focus-visible,
+  [role="tab"]:focus-visible,
+  [role="button"]:focus-visible,
+  [role="menuitem"]:focus-visible,
+  [role="option"]:focus-visible,
   [tabindex="0"]:focus-visible {
-    outline: 2px solid var(--color-blue-500, #3b82f6);
-    outline-offset: 2px;
+    outline: 2px solid var(--color-accent, #2563eb);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  /* Suppress the default focus ring on elements that receive programmatic focus
+     (e.g. #main-content on skip-link activation, dialog containers). */
+  [tabindex="-1"]:focus {
+    outline: none;
+  }
+
+  /* High-contrast mode support */
+  @media (forced-colors: active) {
+    button:focus-visible,
+    a:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    textarea:focus-visible,
+    [tabindex="0"]:focus-visible {
+      outline: 3px solid ButtonText;
+      outline-offset: 3px;
+    }
   }
 }
 
