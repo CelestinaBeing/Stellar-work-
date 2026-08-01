@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
+import TruncatedAddress from "@/components/TruncatedAddress";
 import { useWallet } from "@/lib/wallet-context";
 import { useMessaging } from "@/lib/messaging-context";
 import {
@@ -76,7 +77,11 @@ function ConversationRow({
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline justify-between gap-2">
             <span className={`truncate text-sm font-mono ${convo.unreadCount > 0 ? "font-semibold text-slate-900" : "font-medium text-slate-700"}`}>
-              {shortAddr(convo.peerAddress)}
+              <TruncatedAddress
+                address={convo.peerAddress}
+                className={`font-mono text-sm ${convo.unreadCount > 0 ? "font-semibold text-slate-900" : "font-medium text-slate-700"}`}
+                focusable={false}
+              />
             </span>
             <span className="shrink-0 text-xs text-slate-400">
               {formatMessageTime(convo.lastMessageAt)}

@@ -6,6 +6,7 @@ import InfoTooltip from "@/components/InfoTooltip";
 import NoResultsState from "@/components/NoResultsState";
 import JobCardSkeleton from "@/components/JobCardSkeleton";
 import SectionCard from "@/components/SectionCard";
+import TruncatedAddress from "@/components/TruncatedAddress";
 import ComparisonBar from "@/components/ComparisonBar";
 import JobFilterPanel, { DEFAULT_FILTERS, type JobFilters } from "@/components/JobFilterPanel";
 import { acceptJob, getDescriptionCid, getJob, getJobCount } from "@/lib/contract";
@@ -911,7 +912,12 @@ export default function HomePage() {
                     {formatXlmWithFiat(job.amount, fiatCurrency, fiatRates?.rates)}
                   </p>
                   <p className="mt-0.5 truncate font-mono text-xs text-slate-400">
-                    Token: {job.token ? `${job.token.slice(0, 8)}...${job.token.slice(-4)}` : "N/A"}
+                    Token:{" "}
+                    {job.token ? (
+                      <TruncatedAddress address={job.token} className="font-mono text-xs text-slate-400" />
+                    ) : (
+                      "N/A"
+                    )}
                   </p>
                   <p className="mt-1 line-clamp-2 text-sm text-slate-700">
                     {getDescription(job.description_hash)}
