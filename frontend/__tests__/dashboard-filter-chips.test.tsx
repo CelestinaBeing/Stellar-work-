@@ -246,8 +246,8 @@ describe("Dashboard filter chip toggling", () => {
     fireEvent.click(cancelledFilter);
 
     await waitFor(() => {
-      expect(screen.getByText("No jobs match this filter")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Clear filter" })).toBeInTheDocument();
+      expect(screen.getAllByText("No jobs match this filter")).toHaveLength(2);
+      expect(screen.getAllByRole("button", { name: "Clear filter" })).toHaveLength(2);
     });
   });
 
