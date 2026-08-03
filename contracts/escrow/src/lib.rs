@@ -965,13 +965,11 @@ impl Escrow {
     }
 
     pub fn auto_approve(e: Env, freelancer: Address, job_id: u64) {
-        let mut job = get_job_or_panic(&e, job_id);
         freelancer.require_auth();
         require_active_access(&e, &freelancer);
 
-        if job.status != JobStatus::SubmittedForReview {
-            panic_with_error!(&e, Error::InvalidStatus);
-        }
+        // PERF-01: single job read + status check
+        let mut job = get_job_requiring_status(&e, job_id, &JobStatus::SubmittedForReview);
         if job.freelancer != Option::Some(freelancer.clone()) {
             panic_with_error!(&e, Error::Unauthorized);
         }
@@ -1271,6 +1269,31 @@ impl Escrow {
 
     pub fn get_job(env: Env, job_id: u64) -> Job {
         get_job(&env, job_id)
+    }
+
+    /// PERF-01: Batch-fetch jobs in one call to avoid N individual `get_job` reads.
+    pub fn get_jobs_batch(env: Env, start: u64, limit: u32) -> Vec<Job> {
+        let count: u64 = env.storage().instance().get(&DataKey::JobCount).unwrap_or(0);
+        let mut jobs = Vec::new(&env);
+        if start == 0 || limit == 0 || start > count {
+            return jobs;
+        }
+        let end = core::cmp::min(
+            count,
+            start.saturating_add(limit as u64).saturating_sub(1),
+        );
+        let mut cursor = start;
+        while cursor <= end {
+            if let Some(job) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, Job>(&DataKey::Job(cursor))
+            {
+                jobs.push_back(job);
+            }
+            cursor = cursor.saturating_add(1);
+        }
+        jobs
     }
 
     pub fn get_job_count(env: Env) -> u64 {
@@ -1770,14 +1793,27 @@ mod test;
 }
 
 fn require_active_access(e: &Env, address: &Address) {
-    if e.storage().persistent().get(&DataKey::Blacklisted(address.clone())).unwrap_or(false) {
+    // PERF-01: read blacklist first; only hit whitelist storage when mode is on.
+    if e.storage()
+        .persistent()
+        .get(&DataKey::Blacklisted(address.clone()))
+        .unwrap_or(false)
+    {
         panic_with_error!(e, Error::BlacklistedUser);
     }
-    let whitelist_mode: bool = e.storage().instance().get(&DataKey::WhitelistMode).unwrap_or(false);
-    if whitelist_mode {
-        if !e.storage().persistent().get(&DataKey::Whitelisted(address.clone())).unwrap_or(false) {
-            panic_with_error!(e, Error::NotWhitelisted);
-        }
+    let whitelist_mode: bool = e
+        .storage()
+        .instance()
+        .get(&DataKey::WhitelistMode)
+        .unwrap_or(false);
+    if whitelist_mode
+        && !e
+            .storage()
+            .persistent()
+            .get(&DataKey::Whitelisted(address.clone()))
+            .unwrap_or(false)
+    {
+        panic_with_error!(e, Error::NotWhitelisted);
     }
 
     pub fn batch_approve_jobs(e: Env, client: Address, job_ids: Vec<u64>) {
@@ -1786,14 +1822,13 @@ fn require_active_access(e: &Env, address: &Address) {
             panic_with_error!(&e, Error::BatchLimitExceeded);
         }
 
+        // PERF-01: cache fee bps once for the whole batch (instance storage).
+        let fee_bps = get_fee_bps_storage(&e);
+
         let mut idx = 0;
         while idx < job_ids.len() {
             let job_id = job_ids.get(idx).unwrap();
-            let job = get_job_or_panic(&e, job_id);
-
-            if job.status != JobStatus::SubmittedForReview {
-                panic_with_error!(&e, Error::InvalidStatus);
-            }
+            let job = get_job_requiring_status(&e, job_id, &JobStatus::SubmittedForReview);
             if job.client != client {
                 panic_with_error!(&e, Error::Unauthorized);
             }
@@ -1803,7 +1838,7 @@ fn require_active_access(e: &Env, address: &Address) {
                 Option::None => panic_with_error!(&e, Error::InvalidStatus),
             };
 
-            let fee = checked_mul_div(&e, job.amount, get_fee_bps_storage(&e), BPS_DENOMINATOR);
+            let fee = checked_mul_div(&e, job.amount, fee_bps, BPS_DENOMINATOR);
             let payout = checked_sub(&e, job.amount, fee);
             let current_fees = get_token_fees(&e, &job.token);
             let updated_fees = checked_add(&e, current_fees, fee);
@@ -1838,13 +1873,11 @@ fn require_active_access(e: &Env, address: &Address) {
         max_slippage_bps: u32,
     ) {
         freelancer.require_auth();
-        let job = get_job_or_panic(&e, job_id);
+        // PERF-01: single job read + status check
+        let job = get_job_requiring_status(&e, job_id, &JobStatus::InProgress);
 
         if job.freelancer != Option::Some(freelancer.clone()) {
             panic_with_error!(&e, Error::Unauthorized);
-        }
-        if job.status != JobStatus::InProgress {
-            panic_with_error!(&e, Error::InvalidStatus);
         }
         if max_slippage_bps > MAX_SLIPPAGE_BPS {
             panic_with_error!(&e, Error::InvalidAmount);
@@ -1931,6 +1964,16 @@ fn get_job_or_panic(e: &Env, job_id: u64) -> Job {
         .persistent()
         .get::<DataKey, Job>(&DataKey::Job(job_id))
         .unwrap_or_else(|| panic_with_error!(e, Error::JobNotFound))
+}
+
+/// PERF-01: Combine job fetch + status check so callers avoid a separate
+/// `get_job` followed by a redundant status re-read pattern.
+fn get_job_requiring_status(e: &Env, job_id: u64, expected: &JobStatus) -> Job {
+    let job = get_job_or_panic(e, job_id);
+    if &job.status != expected {
+        panic_with_error!(e, Error::InvalidStatus);
+    }
+    job
 }
 
 fn set_job(e: &Env, job_id: u64, job: &Job) {
@@ -2141,11 +2184,13 @@ fn calculate_fee_for_amount(e: &Env, amount: i128) -> i128 {
         .get::<DataKey, u32>(&DataKey::FeeTierCount)
         .unwrap_or(0);
 
+    // PERF-01: read default fee bps once and reuse.
+    let default_bps = get_fee_bps_storage(e);
     if tier_count == 0 {
-        return get_fee_bps_storage(e);
+        return default_bps;
     }
 
-    let mut matched_bps: i128 = get_fee_bps_storage(e);
+    let mut matched_bps: i128 = default_bps;
 
     for i in 0..tier_count {
         if let Some(tier) = e.storage()

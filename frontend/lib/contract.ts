@@ -1,7 +1,5 @@
 "use client";
 
-// TEST-01: unit tests for contract helpers (issue #628)
-
 import { callContract, nativeToScVal, xdr } from "@/lib/stellar";
 import { requireContractId } from "@/lib/config";
 import { getContractIdForNetwork, getPersistedNetwork } from "@/lib/network-config";
