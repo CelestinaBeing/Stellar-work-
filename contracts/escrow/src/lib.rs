@@ -1285,6 +1285,38 @@ impl Escrow {
         env.storage().instance().get::<_, Fees>(&DataKey::Fees).unwrap_or(Fees { total_collected: 0 }).total_collected
     }
 
+    pub fn emergency_recover(env: Env, to: Address) {
+        let admin = env.storage().instance().get::<_, Address>(&DataKey::Admin).expect("Not initialized");
+        admin.require_auth();
+        let contract_address = env.current_contract_address();
+
+        if let Some(native_token) = env.storage().instance().get::<_, Address>(&DataKey::NativeToken) {
+            let token_client = token::Client::new(&env, &native_token);
+            let balance = token_client.balance(&contract_address);
+            if balance > 0 {
+                token_client.transfer(&contract_address, &to, &balance);
+            }
+        }
+
+        let count: u32 = env.storage().instance().get(&DataKey::AllowedTokenCount).unwrap_or(0);
+        for i in 0..count {
+            if let Some(token_addr) = env.storage().instance().get::<_, Address>(&DataKey::AllowedToken(i)) {
+                let token_client = token::Client::new(&env, &token_addr);
+                let balance = token_client.balance(&contract_address);
+                if balance > 0 {
+                    token_client.transfer(&contract_address, &to, &balance);
+                }
+            }
+        }
+
+        env.storage().instance().set(&DataKey::Fees, &Fees { total_collected: 0 });
+
+        env.events().publish(
+            (soroban_sdk::Symbol::new(&env, "contract_recovered"),),
+            to,
+        );
+    }
+
     pub fn withdraw_fees(env: Env, admin: Address, amount: i128, token_addr: Address) {
         admin.require_auth();
         require_admin(&env);
@@ -1444,6 +1476,39 @@ impl Escrow {
             .instance()
             .get(&DataKey::Fees(token))
             .unwrap_or(0)
+    }
+
+    pub fn emergency_recover(env: Env, to: Address) -> Result<(), Error> {
+        let _admin = check_admin(&env);
+        let contract_address = env.current_contract_address();
+
+        if let Some(native_token) = env.storage().instance().get::<_, Address>(&DataKey::NativeToken) {
+            let token_client = token::Client::new(&env, &native_token);
+            let balance = token_client.balance(&contract_address);
+            if balance > 0 {
+                token_client.transfer(&contract_address, &to, &balance);
+            }
+            env.storage().instance().set(&DataKey::Fees(native_token), &0i128);
+        }
+
+        let count: u32 = env.storage().instance().get(&DataKey::AllowedTokenCount).unwrap_or(0);
+        for i in 0..count {
+            if let Some(token_addr) = env.storage().instance().get::<_, Address>(&DataKey::AllowedToken(i)) {
+                let token_client = token::Client::new(&env, &token_addr);
+                let balance = token_client.balance(&contract_address);
+                if balance > 0 {
+                    token_client.transfer(&contract_address, &to, &balance);
+                }
+                env.storage().instance().set(&DataKey::Fees(token_addr), &0i128);
+            }
+        }
+
+        env.events().publish(
+            (soroban_sdk::Symbol::new(&env, "contract_recovered"),),
+            to,
+        );
+
+        Ok(())
     }
 
     pub fn withdraw_fees(env: Env, token: Address) -> Result<(), Error> {
