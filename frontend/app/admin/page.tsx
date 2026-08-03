@@ -99,13 +99,13 @@ export default function AdminPage() {
       setFees(BigInt(accrued));
 
       const envAdmin = process.env.NEXT_PUBLIC_ADMIN_ADDRESS;
-      let actualAdmin = walletAddress;
-      if (envAdmin) {
-        setIsAdmin(walletAddress === envAdmin);
-        actualAdmin = envAdmin;
-      } else {
-        setIsAdmin(true);
+      if (!envAdmin || walletAddress !== envAdmin) {
+        setIsAdmin(false);
+        setLoading(false);
+        return;
       }
+      setIsAdmin(true);
+      const actualAdmin = envAdmin;
 
       const count = await adminGetJobCount(actualAdmin);
       const jobsList = await adminGetAllJobs(actualAdmin, 0, count);
@@ -219,7 +219,8 @@ export default function AdminPage() {
     setError(null);
     setSuccessMessage(null);
     try {
-      const actualAdmin = process.env.NEXT_PUBLIC_ADMIN_ADDRESS || wallet;
+      const actualAdmin = process.env.NEXT_PUBLIC_ADMIN_ADDRESS;
+      if (!actualAdmin || actualAdmin !== wallet) throw new Error("Unauthorized");
       if (action === "addBlacklist") await addToBlacklist(actualAdmin, accessTarget);
       else if (action === "removeBlacklist") await removeFromBlacklist(actualAdmin, accessTarget);
       else if (action === "addWhitelist") await addToWhitelist(actualAdmin, accessTarget);
@@ -239,7 +240,8 @@ export default function AdminPage() {
     setError(null);
     setSuccessMessage(null);
     try {
-      const actualAdmin = process.env.NEXT_PUBLIC_ADMIN_ADDRESS || wallet;
+      const actualAdmin = process.env.NEXT_PUBLIC_ADMIN_ADDRESS;
+      if (!actualAdmin || actualAdmin !== wallet) throw new Error("Unauthorized");
       await setWhitelistMode(actualAdmin, !isWhitelistMode);
       setIsWhitelistMode(!isWhitelistMode);
       setSuccessMessage(`Whitelist mode ${!isWhitelistMode ? "enabled" : "disabled"}.`);
