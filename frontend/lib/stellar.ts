@@ -242,3 +242,14 @@ export function truncateAddress(address: string, chars = 4): string {
   if (!address || address.length <= chars * 2 + 3) return address;
   return `${address.slice(0, chars + 2)}...${address.slice(-chars)}`;
 }
+
+/** Stellar account (G…) or contract (C…) StrKey — 56 chars, base32 alphabet. */
+const STELLAR_ADDRESS_RE = /^[GC][A-Z2-7]{55}$/;
+
+/**
+ * Validates a Stellar address string (account or contract).
+ * Matches the format used across profile/messages routes.
+ */
+export function isValidStellarAddress(address: string): boolean {
+  return STELLAR_ADDRESS_RE.test(address.trim());
+}

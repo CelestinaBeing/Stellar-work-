@@ -7,6 +7,7 @@ import LoadingState from "@/components/LoadingState";
 import { useToast } from "@/components/ToastProvider";
 import StatusPill from "@/components/StatusPill";
 import ShareButton from "@/components/ShareButton";
+import TruncatedAddress from "@/components/TruncatedAddress";
 import RichTextRenderer, { isRichText, PlainTextRenderer } from "@/components/RichTextRenderer";
 import { useNotifications } from "@/lib/notifications-context";
 import { acceptJob, approveWork, cancelJob, freelancerCancelJob, getDescriptionCid, getJob, submitWork } from "@/lib/contract";
@@ -549,7 +550,11 @@ export default function JobDetailPage() {
         <p>
           <strong>Token:</strong>{" "}
           <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-xs">
-            {job.token ? `${job.token.slice(0, 8)}...${job.token.slice(-4)}` : "N/A"}
+            {job.token ? (
+              <TruncatedAddress address={job.token} className="font-mono text-xs" />
+            ) : (
+              "N/A"
+            )}
           </code>
         </p>
         <div>

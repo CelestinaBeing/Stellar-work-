@@ -18,6 +18,7 @@ import EmptyState from "@/components/EmptyState";
 import ErrorBanner from "@/components/ErrorBanner";
 import StatusPill from "@/components/StatusPill";
 import SectionCard from "@/components/SectionCard";
+import TruncatedAddress from "@/components/TruncatedAddress";
 import { formatDeadline, toXlm } from "@/lib/format";
 import { isConfirmSuppressed, CONFIRM_KEYS } from "@/lib/confirm-prefs";
 import { useWallet } from "@/lib/wallet-context";
@@ -285,7 +286,7 @@ export default function AdminPage() {
         <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-center">
           <p className="font-medium text-red-800">Unauthorized</p>
           <p className="mt-1 text-sm text-red-600">
-            Your wallet ({wallet.slice(0, 6)}...{wallet.slice(-4)}) is not the
+            Your wallet (<TruncatedAddress address={wallet} />) is not the
             contract admin.
           </p>
         </div>
@@ -629,10 +630,14 @@ export default function AdminPage() {
                       <StatusPill status={job.status} />
                     </td>
                     <td className="py-2 pr-4 font-mono text-xs">
-                      {job.client.slice(0, 8)}...
+                      <TruncatedAddress address={job.client} />
                     </td>
                     <td className="py-2 pr-4 font-mono text-xs">
-                      {job.freelancer ? `${job.freelancer.slice(0, 8)}...` : "-"}
+                      {job.freelancer ? (
+                        <TruncatedAddress address={job.freelancer} />
+                      ) : (
+                        "-"
+                      )}
                     </td>
                     <td className="py-2 pr-4 text-right">
                       <span className="inline-flex min-w-0 items-baseline justify-end gap-1">
