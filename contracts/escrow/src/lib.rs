@@ -162,6 +162,7 @@ pub enum DataKey {
     SLAAcceptedAt(u64),
     SLAPenaltyApplied(u64),
     FreelancerJobs(Address),
+    ClientJobs(Address),
     BaseFeeBps,
     DiscountTiers,
     UserCompletedJobs(Address),
@@ -274,6 +275,17 @@ impl EscrowContract {
         };
 
         put_job(&env, job_id, &job);
+
+        let mut c_jobs: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ClientJobs(client.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+        c_jobs.push_back(job_id);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ClientJobs(client.clone()), &c_jobs);
+
         job_id
     }
 
@@ -503,6 +515,12 @@ impl EscrowContract {
         get_job(&env, job_id)
     }
 
+    }
+
+    pub fn get_job(env: Env, job_id: u64) -> Job {
+        get_job(&env, job_id)
+    }
+
     pub fn get_job_count(env: Env) -> u64 {
         env.storage().instance().get(&DataKey::JobCount).unwrap_or(0)
     }
@@ -515,6 +533,13 @@ impl EscrowContract {
         env.storage()
             .persistent()
             .get(&DataKey::FreelancerJobs(freelancer))
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    pub fn get_client_jobs(env: Env, client: Address) -> Vec<u64> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ClientJobs(client))
             .unwrap_or_else(|| Vec::new(&env))
     }
 
@@ -777,7 +802,7 @@ impl EscrowContract {
         }
 
         let job = Job {
-            client,
+            client: client.clone(),
             freelancer: None,
             amount: total,
             description_hash: BytesN::from_array(&env, &[0u8; 32]),
@@ -791,8 +816,33 @@ impl EscrowContract {
             category,
         };
         put_job(&env, count, &job);
+
+        let mut c_jobs: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ClientJobs(client.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+        c_jobs.push_back(count);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ClientJobs(client.clone()), &c_jobs);
+
         count
     }
+
+    pub fn approve_milestone(env: Env, client: Address, job_id: u64, milestone_id: u32) {
+        client.require_auth();
+        let job = get_job(&env, job_id);
+        if job.client != client { panic!("not authorized"); }
+        if job.status != JobStatus::InProgress && job.status != JobStatus::SubmittedForReview {
+            panic!("job not active");
+        }
+        let mut ms: Milestone = env.storage().persistent()
+            .get(&DataKey::Milestone(job_id, milestone_id))
+            .unwrap_or_else(|| panic!("milestone not found"));
+        if ms.is_released { panic!("already released"); }
+        ms.is_released = true;
+        env.storage().persistent().set(&DataKey::Milestone(job_id, milestone_id), &ms);
 
     pub fn approve_milestone(env: Env, client: Address, job_id: u64, milestone_id: u32) {
         client.require_auth();

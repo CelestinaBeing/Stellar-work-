@@ -479,6 +479,44 @@ fn test_sla_breach_event_emitted() {
 }
 
 #[test]
+fn test_get_client_jobs_returns_correct_ids() {
+    let env = Env::default();
+    let (_admin, client, _freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let deadline: u64 = 1000;
+
+    // 1. Verify initially empty
+    let initial_jobs = escrow.get_client_jobs(&client);
+    assert_eq!(initial_jobs.len(), 0);
+
+    // 2. Post two jobs
+    let id1 = escrow.post_job(
+        &client,
+        &100_0000000i128,
+        &desc_hash,
+        &100u32,
+        &deadline,
+        &token,
+        &dummy_title(&env),
+        &dummy_category(&env),
+    );
+    let id2 = escrow.post_job(
+        &client,
+        &200_0000000i128,
+        &desc_hash,
+        &100u32,
+        &deadline,
+        &token,
+        &dummy_title(&env),
+        &dummy_category(&env),
+    );
+
+    // 3. Verify indexed jobs match posted job IDs
+    let client_jobs = escrow.get_client_jobs(&client);
+    assert_eq!(client_jobs.len(), 2);
+    assert_eq!(client_jobs.get(0).unwrap(), id1);
+    assert_eq!(client_jobs.get(1).unwrap(), id2);
 fn test_discount_tiers_and_high_volume_fee() {
     let env = Env::default();
     let (admin, client, freelancer, _token, contract_id) = setup_test(&env);
