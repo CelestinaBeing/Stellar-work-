@@ -1082,6 +1082,9 @@ export default function HomePage() {
                     )}
                   </div>
                   <Link href={`/job/${id}`} className="block" onClick={() => markJobViewed(id)}>
+                    <h3 className="flex items-center gap-2 text-lg font-medium hover:underline">
+                      Job #{id}
+                      {newJobIds.has(id) && (
                     <h2 className="flex items-center gap-2 text-lg font-medium hover:underline">
                       {job.title || `Job #${id}`}
                       {newJobIds.has(id) && (
@@ -1092,7 +1095,7 @@ export default function HomePage() {
                           New
                         </span>
                       )}
-                    </h2>
+                    </h3>
                   </Link>
                   {job.category && (
                     <span className="mt-1 inline-block rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">

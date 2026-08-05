@@ -561,6 +561,22 @@ function JobDetailPageContent() {
         </p>
       )}
 
+      {job.status === "SubmittedForReview" && (() => {
+        const countdown = getAutoApprovalCountdown(job.submitted_at);
+        if (!countdown) return null;
+        return (
+          <div className={`rounded-lg border p-4 text-sm ${
+            countdown.expired
+              ? "border-red-200 bg-red-50 text-red-800"
+              : "border-amber-200 bg-amber-50 text-amber-800"
+          }`}>
+            <div className="flex items-start gap-3">
+              <svg className="h-5 w-5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <div>
+                <h2 className="font-semibold">{isClient ? "Action Required: Review Submitted Work" : "Work Under Review"}</h2>
+                <p className="mt-1 text-xs opacity-90">{countdown.text}</p>
       {job.status === "SubmittedForReview" &&
         (() => {
           const countdown = getAutoApprovalCountdown(job.submitted_at);
@@ -778,6 +794,27 @@ function JobDetailPageContent() {
           })()}
 
         {/* Schedule meeting form */}
+        {showScheduleForm && wallet && (() => {
+          const otherParty =
+            wallet === job.client ? job.freelancer :
+            wallet === job.freelancer ? job.client :
+            job.client;
+          if (!otherParty) return null;
+          return (
+            <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm">
+              <h2 className="font-medium text-slate-800 mb-3">Propose a Meeting</h2>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Meeting title</label>
+                  <input
+                    type="text"
+                    value={meetingTitle}
+                    onChange={(e) => setMeetingTitle(e.target.value)}
+                    placeholder="e.g. Project kickoff call"
+                    className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="grid grid-cols-3 gap-2">
         {showScheduleForm &&
           wallet &&
           (() => {
@@ -872,6 +909,23 @@ function JobDetailPageContent() {
           })()}
 
         {/* Show existing meetings for this job */}
+        {wallet && (() => {
+          const jobMeetings = getMeetingsForJob(numericId);
+          if (jobMeetings.length === 0) return null;
+          return (
+            <div className="mt-3 space-y-2">
+              <h2 className="text-xs font-medium text-slate-600 uppercase tracking-wider">Meetings</h2>
+              {jobMeetings.map((m) => (
+                <div key={m.id} className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-3 py-2 text-xs">
+                  <div>
+                    <span className="font-medium text-slate-800">{m.title}</span>
+                    <span className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                      m.status === "confirmed" ? "bg-green-100 text-green-700" :
+                      m.status === "pending" ? "bg-amber-100 text-amber-700" :
+                      "bg-slate-100 text-slate-500"
+                    }`}>
+                      {m.status}
+                    </span>
         {wallet &&
           (() => {
             const jobMeetings = getMeetingsForJob(numericId);

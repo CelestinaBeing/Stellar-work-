@@ -159,7 +159,7 @@ function MeetingCard({
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h3 className="font-medium text-slate-900">{meeting.title}</h3>
+            <h2 className="font-medium text-slate-900">{meeting.title}</h2>
             <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_COLORS[meeting.status]}`}>
               {STATUS_LABELS[meeting.status]}
             </span>
