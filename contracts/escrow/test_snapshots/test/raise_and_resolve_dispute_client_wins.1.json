@@ -197,6 +197,9 @@
               ]
             }
           },
+<<<<<<< HEAD
+          "sub_invocations": []
+=======
           "sub_invocations": [
             {
               "function": {
@@ -222,6 +225,7 @@
               "sub_invocations": []
             }
           ]
+>>>>>>> upstream/main
         }
       ]
     ],
@@ -761,6 +765,17 @@
                       "val": {
                         "address": "CCABDO7UZXYE4W6GVSEGSNNZTKSLFQGKXXQTH6OX7M7GKZ4Z6CUJNGZN"
                       }
+<<<<<<< HEAD
+                    },
+                    {
+                      "key": {
+                        "symbol": "version"
+                      },
+                      "val": {
+                        "u32": 1
+                      }
+=======
+>>>>>>> upstream/main
                     }
                   ]
                 }
@@ -2174,6 +2189,8 @@
       "event": {
         "ext": "v0",
         "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
+<<<<<<< HEAD
+=======
         "type_": "diagnostic",
         "body": {
           "v0": {
@@ -2266,6 +2283,7 @@
       "event": {
         "ext": "v0",
         "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
+>>>>>>> upstream/main
         "type_": "contract",
         "body": {
           "v0": {
@@ -2285,7 +2303,11 @@
                 {
                   "i128": {
                     "hi": 0,
+<<<<<<< HEAD
+                    "lo": 0
+=======
                     "lo": 50000000
+>>>>>>> upstream/main
                   }
                 }
               ]
@@ -2437,6 +2459,17 @@
                   "val": {
                     "address": "CCABDO7UZXYE4W6GVSEGSNNZTKSLFQGKXXQTH6OX7M7GKZ4Z6CUJNGZN"
                   }
+<<<<<<< HEAD
+                },
+                {
+                  "key": {
+                    "symbol": "version"
+                  },
+                  "val": {
+                    "u32": 1
+                  }
+=======
+>>>>>>> upstream/main
                 }
               ]
             }
@@ -2516,6 +2549,8 @@
                 {
                   "i128": {
                     "hi": 0,
+<<<<<<< HEAD
+=======
                     "lo": 50000000
                   }
                 }
@@ -2608,6 +2643,7 @@
                 {
                   "i128": {
                     "hi": 0,
+>>>>>>> upstream/main
                     "lo": 1000000
                   }
                 }
@@ -2892,6 +2928,17 @@
                   "val": {
                     "address": "CCABDO7UZXYE4W6GVSEGSNNZTKSLFQGKXXQTH6OX7M7GKZ4Z6CUJNGZN"
                   }
+<<<<<<< HEAD
+                },
+                {
+                  "key": {
+                    "symbol": "version"
+                  },
+                  "val": {
+                    "u32": 1
+                  }
+=======
+>>>>>>> upstream/main
                 }
               ]
             }

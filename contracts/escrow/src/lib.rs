@@ -5,6 +5,7 @@ const PLATFORM_FEE_BPS: u64 = 250;
 const MAX_DESC_PAYLOAD: u32 = 8192;
 const SLA_PENALTY_DENOMINATOR: u32 = 10_000;
 const CANCELLATION_GRACE_PERIOD: u64 = 100;
+const INITIAL_JOB_VERSION: u32 = 1;
 
 fn current_ledger(env: &Env) -> u64 {
     u64::from(env.ledger().sequence())
@@ -36,6 +37,7 @@ pub struct Job {
     pub submitted_at: u64,
     pub title: BytesN<64>,
     pub category: Symbol,
+    pub version: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -272,6 +274,7 @@ impl EscrowContract {
             submitted_at: 0,
             title,
             category,
+            version: INITIAL_JOB_VERSION,
         };
 
         put_job(&env, job_id, &job);
@@ -515,6 +518,28 @@ impl EscrowContract {
         get_job(&env, job_id)
     }
 
+    pub fn get_job_count(env: Env) -> u64 {
+        env.storage().instance().get(&DataKey::JobCount).unwrap_or(0)
+    }
+
+    pub fn get_completed_jobs_count(env: Env) -> u64 {
+        env.storage().instance().get(&DataKey::CompletedJobsCount).unwrap_or(0)
+    }
+
+    pub fn get_freelancer_jobs(env: Env, freelancer: Address) -> Vec<u64> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::FreelancerJobs(freelancer))
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    pub fn get_client_jobs(env: Env, client: Address) -> Vec<u64> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ClientJobs(client))
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
     }
 
     pub fn get_job(env: Env, job_id: u64) -> Job {
@@ -575,6 +600,60 @@ impl EscrowContract {
         }
     }
 
+    pub fn get_job_version(env: Env, job_id: u64) -> u32 {
+        let job = get_job(&env, job_id);
+        job.version
+    }
+
+    pub fn migrate_job_version(env: Env, caller: Address, job_id: u64, target_version: u32) -> u32 {
+        caller.require_auth();
+        let mut job = get_job(&env, job_id);
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        if caller != job.client && caller != admin {
+            panic!("unauthorized");
+        }
+        if target_version < job.version {
+            panic!("cannot downgrade version");
+        }
+        let old_version = job.version;
+        job.version = target_version;
+        put_job(&env, job_id, &job);
+
+        env.events().publish(
+            (soroban_sdk::Symbol::new(&env, "job_version_migrated"),),
+            (job_id, old_version, target_version),
+        );
+        target_version
+    }
+
+    pub fn get_sla_status(env: Env, job_id: u64) -> SLAStatus {
+        let has_config = env.storage().persistent().has(&DataKey::SLAConfig(job_id));
+        let (response_time_ledgers, delivery_time_ledgers, penalty_bps, auto_escalate) =
+            if has_config {
+                let cfg: SLAConfig = env.storage().persistent().get(&DataKey::SLAConfig(job_id)).unwrap();
+                (cfg.response_time_ledgers, cfg.delivery_time_ledgers, cfg.penalty_bps, cfg.auto_escalate)
+            } else {
+                (0u64, 0u64, 0u64, false)
+            };
+        let accepted_at: u64 = env.storage().persistent().get(&DataKey::SLAAcceptedAt(job_id)).unwrap_or(0);
+        let breached = if accepted_at > 0 && delivery_time_ledgers > 0 {
+            current_ledger(&env) > accepted_at + delivery_time_ledgers
+        } else {
+            false
+        };
+        let penalty_applied: bool = env.storage().persistent().get(&DataKey::SLAPenaltyApplied(job_id)).unwrap_or(false);
+        SLAStatus {
+            has_config,
+            response_time_ledgers,
+            delivery_time_ledgers,
+            penalty_bps,
+            auto_escalate,
+            accepted_at,
+            breached,
+            penalty_applied,
+        }
+    }
+
     pub fn get_sla_status(env: Env, job_id: u64) -> SLAStatus {
         let has_config = env.storage().persistent().has(&DataKey::SLAConfig(job_id));
         let (response_time_ledgers, delivery_time_ledgers, penalty_bps, auto_escalate) =
@@ -618,6 +697,31 @@ impl EscrowContract {
 
     pub fn get_discount_tiers(env: Env) -> Vec<DiscountTier> {
         env.storage()
+            .instance()
+            .get(&DataKey::DiscountTiers)
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    pub fn calculate_effective_fee_bps(env: Env, user: Address) -> u32 {
+        let base_fee: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::BaseFeeBps)
+            .unwrap_or(PLATFORM_FEE_BPS as u32);
+
+        let completed_jobs = Self::get_user_completed_jobs(env.clone(), user);
+        let tiers = Self::get_discount_tiers(env.clone());
+
+        let mut discount_bps = 0u32;
+        for tier in tiers.iter() {
+            if completed_jobs >= tier.min_completed_jobs {
+                discount_bps = tier.discount_bps;
+            }
+        }
+
+        base_fee.saturating_sub(discount_bps)
+    }
+
             .instance()
             .get(&DataKey::DiscountTiers)
             .unwrap_or_else(|| Vec::new(&env))
@@ -814,8 +918,22 @@ impl EscrowContract {
             submitted_at: 0,
             title,
             category,
+            version: INITIAL_JOB_VERSION,
         };
         put_job(&env, count, &job);
+
+        let mut c_jobs: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ClientJobs(client.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+        c_jobs.push_back(count);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ClientJobs(client.clone()), &c_jobs);
+
+        count
+    }
 
         let mut c_jobs: Vec<u64> = env
             .storage()

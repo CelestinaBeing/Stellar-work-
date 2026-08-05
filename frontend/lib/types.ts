@@ -28,6 +28,8 @@ export const STATUS_TO_COUNTS_KEY: Record<JobStatus, keyof JobStatusCounts> = {
 } as const;
 
 export interface Job {
+  /** Schema version for contract upgrades. Initialized to 1. */
+  version?: number;
   client: string;
   freelancer: string | null;
   amount: string;

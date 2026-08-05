@@ -635,3 +635,82 @@ fn test_get_job_status_counts() {
     assert_eq!(counts.total, 3);
     assert_eq!(counts.disputed, 1);
 }
+
+#[test]
+fn test_job_initial_version_is_one() {
+    let env = Env::default();
+    let (_admin, client, _freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let deadline: u64 = 1000;
+
+    let job_id = escrow.post_job(
+        &client,
+        &100_0000000i128,
+        &desc_hash,
+        &100u32,
+        &deadline,
+        &token,
+        &dummy_title(&env),
+        &dummy_category(&env),
+    );
+    assert_eq!(escrow.get_job_version(&job_id), 1);
+    let job = escrow.get_job(&job_id);
+    assert_eq!(job.version, 1);
+}
+
+#[test]
+fn test_migrate_job_version_success() {
+    let env = Env::default();
+    let (admin, client, _freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let deadline: u64 = 1000;
+
+    let job_id = escrow.post_job(
+        &client,
+        &100_0000000i128,
+        &desc_hash,
+        &100u32,
+        &deadline,
+        &token,
+        &dummy_title(&env),
+        &dummy_category(&env),
+    );
+
+    // Client migrates version to 2
+    let new_ver = escrow.migrate_job_version(&client, &job_id, &2u32);
+    assert_eq!(new_ver, 2);
+    assert_eq!(escrow.get_job_version(&job_id), 2);
+    let job = escrow.get_job(&job_id);
+    assert_eq!(job.version, 2);
+
+    // Admin migrates version to 3
+    let admin_ver = escrow.migrate_job_version(&admin, &job_id, &3u32);
+    assert_eq!(admin_ver, 3);
+    assert_eq!(escrow.get_job_version(&job_id), 3);
+}
+
+#[test]
+#[should_panic(expected = "unauthorized")]
+fn test_migrate_job_version_rejects_unauthorized() {
+    let env = Env::default();
+    let (_admin, client, _freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let deadline: u64 = 1000;
+    let stranger = Address::generate(&env);
+
+    let job_id = escrow.post_job(
+        &client,
+        &100_0000000i128,
+        &desc_hash,
+        &100u32,
+        &deadline,
+        &token,
+        &dummy_title(&env),
+        &dummy_category(&env),
+    );
+
+    escrow.migrate_job_version(&stranger, &job_id, &2u32);
+}
