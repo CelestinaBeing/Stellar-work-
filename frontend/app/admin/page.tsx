@@ -18,6 +18,7 @@ import EmptyState from "@/components/EmptyState";
 import ErrorBanner from "@/components/ErrorBanner";
 import StatusPill from "@/components/StatusPill";
 import SectionCard from "@/components/SectionCard";
+import TruncatedAddress from "@/components/TruncatedAddress";
 import { formatDeadline, toXlm } from "@/lib/format";
 import { isConfirmSuppressed, CONFIRM_KEYS } from "@/lib/confirm-prefs";
 import { useWallet } from "@/lib/wallet-context";
@@ -99,18 +100,25 @@ export default function AdminPage() {
       setFees(BigInt(accrued));
 
       const envAdmin = process.env.NEXT_PUBLIC_ADMIN_ADDRESS;
-      let actualAdmin = walletAddress;
-      if (envAdmin) {
-        setIsAdmin(walletAddress === envAdmin);
-        actualAdmin = envAdmin;
-      } else {
-        setIsAdmin(true);
+      if (!envAdmin || walletAddress !== envAdmin) {
+        setIsAdmin(false);
+        setLoading(false);
+        return;
       }
+      setIsAdmin(true);
+      const actualAdmin = envAdmin;
 
       const count = await adminGetJobCount(actualAdmin);
-      const jobsList = await adminGetAllJobs(actualAdmin, 0, count);
-      const fetched = jobsList.map((job, idx) => ({ id: idx + 1, job }));
-      setJobs(fetched);
+      setJobs([]);
+      setLoading(true);
+      try {
+        const limit = 50;
+        const list = await adminGetAllJobs(actualAdmin, 0, Math.max(1, count > limit ? limit : count));
+        const fetched = list.map((job, idx) => ({ id: idx + 1, job }));
+        setJobs(fetched);
+      } catch {
+        setJobs([]);
+      }
 
       const whitelistMode = await isWhitelistModeEnabled();
       setIsWhitelistMode(whitelistMode);
@@ -219,7 +227,8 @@ export default function AdminPage() {
     setError(null);
     setSuccessMessage(null);
     try {
-      const actualAdmin = process.env.NEXT_PUBLIC_ADMIN_ADDRESS || wallet;
+      const actualAdmin = process.env.NEXT_PUBLIC_ADMIN_ADDRESS;
+      if (!actualAdmin || actualAdmin !== wallet) throw new Error("Unauthorized");
       if (action === "addBlacklist") await addToBlacklist(actualAdmin, accessTarget);
       else if (action === "removeBlacklist") await removeFromBlacklist(actualAdmin, accessTarget);
       else if (action === "addWhitelist") await addToWhitelist(actualAdmin, accessTarget);
@@ -239,7 +248,8 @@ export default function AdminPage() {
     setError(null);
     setSuccessMessage(null);
     try {
-      const actualAdmin = process.env.NEXT_PUBLIC_ADMIN_ADDRESS || wallet;
+      const actualAdmin = process.env.NEXT_PUBLIC_ADMIN_ADDRESS;
+      if (!actualAdmin || actualAdmin !== wallet) throw new Error("Unauthorized");
       await setWhitelistMode(actualAdmin, !isWhitelistMode);
       setIsWhitelistMode(!isWhitelistMode);
       setSuccessMessage(`Whitelist mode ${!isWhitelistMode ? "enabled" : "disabled"}.`);
@@ -285,7 +295,7 @@ export default function AdminPage() {
         <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-center">
           <p className="font-medium text-red-800">Unauthorized</p>
           <p className="mt-1 text-sm text-red-600">
-            Your wallet ({wallet.slice(0, 6)}...{wallet.slice(-4)}) is not the
+            Your wallet (<TruncatedAddress address={wallet} />) is not the
             contract admin.
           </p>
         </div>
@@ -629,10 +639,14 @@ export default function AdminPage() {
                       <StatusPill status={job.status} />
                     </td>
                     <td className="py-2 pr-4 font-mono text-xs">
-                      {job.client.slice(0, 8)}...
+                      <TruncatedAddress address={job.client} />
                     </td>
                     <td className="py-2 pr-4 font-mono text-xs">
-                      {job.freelancer ? `${job.freelancer.slice(0, 8)}...` : "-"}
+                      {job.freelancer ? (
+                        <TruncatedAddress address={job.freelancer} />
+                      ) : (
+                        "-"
+                      )}
                     </td>
                     <td className="py-2 pr-4 text-right">
                       <span className="inline-flex min-w-0 items-baseline justify-end gap-1">

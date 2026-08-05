@@ -4,7 +4,7 @@ import { getDescPayloadMax, postJob, storeDescriptionCid } from "@/lib/contract"
 import { uploadToIpfs } from "@/lib/ipfs-service";
 import ErrorBanner from "@/components/ErrorBanner";
 import RichTextEditor, { htmlToPlainText } from "@/components/RichTextEditor";
-import { getExplorerTxUrl } from "@/lib/stellar";
+import { getExplorerTxUrl, isValidStellarAddress } from "@/lib/stellar";
 import { useWallet } from "@/lib/wallet-context";
 import { useEffect, useId, useRef, useState } from "react";
 import {
@@ -13,6 +13,7 @@ import {
   formatCooldown,
   type RateLimitStatus,
 } from "@/lib/rate-limiter";
+import { StrKey } from "@stellar/stellar-sdk";
 
 const MIN_JOB_AMOUNT_XLM = 0.5;
 const DRAFT_STORAGE_KEY_PREFIX = "stellarwork:post-job-draft:";
@@ -55,13 +56,7 @@ function clearDraft(walletAddress: string | null): void {
   }
 }
 
-async function sha256Hex(input: string): Promise<string> {
-  const bytes = new TextEncoder().encode(input);
-  const hash = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(hash))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
+import { sha256Hex } from "@/lib/crypto";
 
 export default function PostJobPage() {
   const { wallet, connectWallet } = useWallet();
@@ -323,6 +318,14 @@ export default function PostJobPage() {
             }
             if (!tokenAddress.trim()) {
               nextFieldErrors.tokenAddress = "Token address is required.";
+            } else if (
+              !StrKey.isValidContractId(tokenAddress.trim()) &&
+              !StrKey.isValidEd25519PublicKey(tokenAddress.trim())
+            ) {
+              nextFieldErrors.tokenAddress = "Invalid Stellar address or contract ID.";
+            } else if (!isValidStellarAddress(tokenAddress)) {
+              nextFieldErrors.tokenAddress =
+                "Enter a valid Stellar address (G... or C..., 56 characters).";
             }
             if (Object.keys(nextFieldErrors).length > 0) {
               setFieldErrors(nextFieldErrors);
@@ -473,13 +476,31 @@ export default function PostJobPage() {
         <label className="block text-sm font-medium">
           Token Address
           <input
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-xs"
+            className={`mt-1 w-full rounded-md border px-3 py-2 font-mono text-xs ${
+              fieldErrors.tokenAddress
+                ? "border-red-400 focus:border-red-500 focus:outline-red-500"
+                : "border-slate-300"
+            }`}
             type="text"
             value={tokenAddress}
             onChange={(e) => {
               setTokenAddress(e.target.value);
               setFieldErrors((current) => ({ ...current, tokenAddress: undefined }));
             }}
+            onBlur={(e) => {
+              const trimmed = e.currentTarget.value.trim();
+              if (!trimmed) return;
+              if (!isValidStellarAddress(trimmed)) {
+                setFieldErrors((current) => ({
+                  ...current,
+                  tokenAddress:
+                    "Enter a valid Stellar address (G... or C..., 56 characters).",
+                }));
+              }
+            }}
+            placeholder="G... or C... (56 characters)"
+            spellCheck={false}
+            autoComplete="off"
             aria-invalid={Boolean(fieldErrors.tokenAddress)}
             aria-describedby={
               fieldErrors.tokenAddress ? "post-job-token-address-error" : undefined

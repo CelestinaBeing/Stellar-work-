@@ -3,12 +3,17 @@
 import ErrorBanner from "@/components/ErrorBanner";
 import EmptyState from "@/components/EmptyState";
 import InfoTooltip from "@/components/InfoTooltip";
+import LoadingState from "@/components/LoadingState";
 import NoResultsState from "@/components/NoResultsState";
+import PullToRefresh from "@/components/PullToRefresh";
 import JobCardSkeleton from "@/components/JobCardSkeleton";
 import SectionCard from "@/components/SectionCard";
+import TruncatedAddress from "@/components/TruncatedAddress";
 import ComparisonBar from "@/components/ComparisonBar";
+import CancelJobConfirmModal from "@/components/CancelJobConfirmModal";
+import SwipeableJobCard from "@/components/SwipeableJobCard";
 import JobFilterPanel, { DEFAULT_FILTERS, type JobFilters } from "@/components/JobFilterPanel";
-import { acceptJob, getDescriptionCid, getJob, getJobCount } from "@/lib/contract";
+import { acceptJob, cancelJob, getDescriptionCid, getJob, getJobCount } from "@/lib/contract";
 import { fetchFromIpfs } from "@/lib/ipfs-service";
 import { useNotifications } from "@/lib/notifications-context";
 import {
@@ -33,6 +38,7 @@ import {
 } from "@/lib/recent-searches";
 import { getExplorerTxUrl } from "@/lib/stellar";
 import { getRecentJobIds, getJobWindowBounds } from "@/lib/recent-ids";
+import Pagination from "@/components/Pagination";
 import type { Job, JobStatus } from "@/lib/types";
 import { useWallet } from "@/lib/wallet-context";
 import Link from "next/link";
@@ -131,6 +137,8 @@ export default function HomePage() {
   const [showBookmarkedOnly, setShowBookmarkedOnly] = useState(false);
   const [bookmarkedIds, setBookmarkedIds] = useState<number[]>([]);
   const [animatingBookmarkId, setAnimatingBookmarkId] = useState<number | null>(null);
+  const [cancelTargetId, setCancelTargetId] = useState<number | null>(null);
+  const [cancelLoading, setCancelLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState(() => {
     if (typeof window === "undefined") return "";
     return new URLSearchParams(window.location.search).get("q") ?? "";
@@ -207,6 +215,8 @@ export default function HomePage() {
     }
     sessionStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
   }, [viewMode]);
+
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(totalJobs / pageSize)), [pageSize, totalJobs]);
 
   useEffect(() => {
     try {
@@ -295,7 +305,15 @@ export default function HomePage() {
             const descMap: Record<string, string> = {};
             for (const { job } of cached.jobs) {
               const stored = localStorage.getItem(`job-desc:${job.description_hash}`);
-              if (stored) descMap[job.description_hash] = stored;
+              if (stored) {
+                // Verify integrity where possible; best-effort synchronous fallthrough
+                try {
+                  // We'll verify asynchronously below when populating from fetched results
+                  descMap[job.description_hash] = stored;
+                } catch {
+                  // ignore
+                }
+              }
             }
             setDescriptions(descMap);
             setJobs(cached.jobs);
@@ -308,9 +326,12 @@ export default function HomePage() {
         }
       }
 
+      // Calculate window for current page only to avoid fetching all jobs.
+      const bounds = getJobWindowBounds(count, page, pageSize);
       const idsToFetch: string[] = [];
-      for (let id = 1; id <= count; id += 1) {
-        idsToFetch.push(String(id));
+      if (bounds) {
+        const ids = getRecentJobIds(bounds.startId, bounds.endId, sortOrder === "newest" ? "newest" : "oldest");
+        for (const id of ids) idsToFetch.push(id);
       }
 
       const results = await Promise.all(
@@ -336,15 +357,34 @@ export default function HomePage() {
         const hash = job.description_hash;
         const stored = localStorage.getItem(`job-desc:${hash}`);
         if (stored) {
-          descMap[hash] = stored;
-          continue;
+          try {
+            // verify integrity before using stored value
+            // import verify lazily to avoid SSR issues
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { verifyHtmlMatchesHash } = await import("@/lib/crypto");
+            // If verification fails, fall back to attempting IPFS fetch
+            if (await verifyHtmlMatchesHash(stored, hash)) {
+              descMap[hash] = stored;
+              continue;
+            }
+          } catch {
+            // proceed to attempt IPFS fetch
+          }
         }
         try {
           const cid = await getDescriptionCid(hash);
           if (cid) {
             const text = await fetchFromIpfs(cid);
-            descMap[hash] = text;
-            localStorage.setItem(`job-desc:${hash}`, text);
+            // verify fetched text
+            try {
+              const { verifyHtmlMatchesHash } = await import("@/lib/crypto");
+              if (await verifyHtmlMatchesHash(text, hash)) {
+                descMap[hash] = text;
+                localStorage.setItem(`job-desc:${hash}`, text);
+              }
+            } catch {
+              // verification failed or crypto helper not available, skip storing
+            }
           }
         } catch {
           // IPFS fetch failed, description will show fallback text
@@ -476,6 +516,69 @@ export default function HomePage() {
     });
   }
 
+  const handleAcceptJob = useCallback(
+    async (id: number) => {
+      setError(null);
+      if (!wallet) {
+        return;
+      }
+      setActionLoading(id);
+      try {
+        const result = await acceptJob(wallet, String(id));
+        if (result.hash) {
+          setLatestTxHash(result.hash);
+        }
+        addNotification("job_accepted", id, `You accepted Job #${id}.`);
+        await refresh();
+      } catch (e) {
+        setError(
+          e instanceof Error
+            ? e.message
+            : "Failed to accept job. Check your balance or contract state.",
+        );
+      } finally {
+        setActionLoading(null);
+      }
+    },
+    [addNotification, refresh, wallet],
+  );
+
+  const toggleBookmark = useCallback((id: number) => {
+    setAnimatingBookmarkId(id);
+    setBookmarkedIds((prev) =>
+      prev.includes(id)
+        ? prev.filter((value) => value !== id)
+        : [...prev, id],
+    );
+    setTimeout(() => setAnimatingBookmarkId(null), 300);
+  }, []);
+
+  const handleConfirmCancelJob = useCallback(async () => {
+    if (!wallet || cancelTargetId === null) {
+      return;
+    }
+    const id = cancelTargetId;
+    setError(null);
+    setCancelLoading(true);
+    try {
+      const result = await cancelJob(wallet, String(id));
+      if (result.hash) {
+        setLatestTxHash(result.hash);
+      }
+      addNotification("job_cancelled", id, `You cancelled Job #${id}.`);
+      await refresh();
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? e.message
+          : "Failed to cancel job. Check your wallet or contract state.",
+      );
+    } finally {
+      setCancelLoading(false);
+      setCancelTargetId(null);
+    }
+  }, [addNotification, cancelTargetId, refresh, wallet]);
+
   const handleSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const term = searchTerm.trim();
@@ -515,6 +618,8 @@ export default function HomePage() {
 
   return (
     <section className="space-y-6">
+      <PullToRefresh onRefresh={refresh} label="Refresh job listings" />
+
       {/* Hero Section */}
       <div className="rounded-lg border border-slate-200 bg-white p-6 md:p-8">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -567,7 +672,7 @@ export default function HomePage() {
 
       {loading && jobs.length === 0 && (
         <div className="space-y-4">
-          <p className="text-sm text-slate-600">Loading jobs...</p>
+          <LoadingState text="Loading jobs..." />
           <div
             className={viewMode === "list" ? "flex flex-col gap-4" : "grid gap-4 md:grid-cols-2"}
             aria-label="Loading open jobs"
@@ -799,6 +904,16 @@ export default function HomePage() {
           </div>
         </fieldset>
 
+        <div className="mt-4">
+          <Pagination
+            page={page}
+            pageSize={pageSize}
+            total={totalJobs}
+            onPageChange={(p) => setPage(p)}
+            onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+          />
+        </div>
+
         <fieldset className="space-y-3 rounded-md border border-slate-200 p-3">
           <legend className="px-1 text-sm font-medium text-slate-700">
             Sort and filter job results
@@ -905,8 +1020,25 @@ export default function HomePage() {
         {visibleJobs.slice((page - 1) * pageSize, page * pageSize).map(({ id, job }) => {
           const deadline = formatDeadline(job.deadline);
 
+          // ✅ FIX: Check if the connected wallet is the job owner
+          const isOwnJob = wallet && wallet.address && job.client && wallet.address === job.client;
+
           return (
             <li key={id}>
+              <SwipeableJobCard
+                jobId={id}
+                canAccept={
+                  job.status === "Open" && Boolean(wallet) && wallet !== job.client
+                }
+                canCancel={Boolean(
+                  wallet && wallet === job.client && job.status === "Open",
+                )}
+                bookmarked={bookmarkedIds.includes(id)}
+                disabled={actionLoading !== null || cancelLoading}
+                onAccept={() => void handleAcceptJob(id)}
+                onBookmark={() => toggleBookmark(id)}
+                onCancel={() => setCancelTargetId(id)}
+              >
               <article
                 className={`interactive-card h-full p-4 ${
                   viewMode === "list"
@@ -927,6 +1059,25 @@ export default function HomePage() {
                       />
                       Compare
                     </label>
+                    {isOwnJob && (
+                      <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                        <svg
+                          aria-hidden="true"
+                          viewBox="0 0 24 24"
+                          className="h-3 w-3"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                          <path d="M2 17l10 5 10-5" />
+                          <path d="M2 12l10 5 10-5" />
+                        </svg>
+                        Your Job
+                      </span>
+                    )}
                   </div>
                   <Link href={`/job/${id}`} className="block" onClick={() => markJobViewed(id)}>
                     <h2 className="flex items-center gap-2 text-lg font-medium hover:underline">
@@ -948,7 +1099,12 @@ export default function HomePage() {
                     {formatXlmWithFiat(job.amount, fiatCurrency, fiatRates?.rates)}
                   </p>
                   <p className="mt-0.5 truncate font-mono text-xs text-slate-400">
-                    Token: {job.token ? `${job.token.slice(0, 8)}...${job.token.slice(-4)}` : "N/A"}
+                    Token:{" "}
+                    {job.token ? (
+                      <TruncatedAddress address={job.token} className="font-mono text-xs text-slate-400" />
+                    ) : (
+                      "N/A"
+                    )}
                   </p>
                   <p className="mt-1 line-clamp-2 text-sm text-slate-700">
                     {getDescription(job.description_hash)}
@@ -974,6 +1130,49 @@ export default function HomePage() {
                   >
                     View Details
                   </Link>
+                  {/* ✅ FIX: Only show "Accept Job" button if NOT the job owner */}
+                  {!isOwnJob ? (
+                    <button
+                      type="button"
+                      className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+                        !wallet || actionLoading === id
+                          ? "cursor-not-allowed bg-slate-100 text-slate-400"
+                          : "bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800"
+                      }`}
+                      title={!wallet ? "Connect your wallet to accept jobs." : undefined}
+                      onClick={async () => {
+                        setError(null);
+                        if (!wallet) {
+                          return;
+                        }
+                        setActionLoading(id);
+                        try {
+                          const result = await acceptJob(wallet, String(id));
+                          if (result.hash) {
+                            setLatestTxHash(result.hash);
+                          }
+                          addNotification("job_accepted", id, `You accepted Job #${id}.`);
+                          await refresh();
+                        } catch (e) {
+                          setError(
+                            e instanceof Error
+                              ? e.message
+                              : "Failed to accept job. Check your balance or contract state.",
+                          );
+                        } finally {
+                          setActionLoading(null);
+                        }
+                      }}
+                      disabled={!wallet || actionLoading !== null}
+                      aria-busy={actionLoading === id}
+                    >
+                      {actionLoading === id ? "Processing..." : "Accept Job"}
+                    </button>
+                  ) : (
+                    <span className="rounded-md px-4 py-2 text-sm font-medium text-slate-400 cursor-not-allowed">
+                      Own Job
+                    </span>
+                  )}
                   <button
                     type="button"
                     className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
@@ -982,29 +1181,7 @@ export default function HomePage() {
                         : "bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800"
                     }`}
                     title={!wallet ? "Connect your wallet to accept jobs." : undefined}
-                    onClick={async () => {
-                      setError(null);
-                      if (!wallet) {
-                        return;
-                      }
-                      setActionLoading(id);
-                      try {
-                        const result = await acceptJob(wallet, String(id));
-                        if (result.hash) {
-                          setLatestTxHash(result.hash);
-                        }
-                        addNotification("job_accepted", id, `You accepted Job #${id}.`);
-                        await refresh();
-                      } catch (e) {
-                        setError(
-                          e instanceof Error
-                            ? e.message
-                            : "Failed to accept job. Check your balance or contract state.",
-                        );
-                      } finally {
-                        setActionLoading(null);
-                      }
-                    }}
+                    onClick={() => void handleAcceptJob(id)}
                     disabled={!wallet || actionLoading !== null}
                     aria-busy={actionLoading === id}
                   >
@@ -1017,15 +1194,7 @@ export default function HomePage() {
                         ? "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
                         : "border-slate-300 text-slate-700 hover:bg-slate-50"
                     } ${animatingBookmarkId === id ? "scale-110" : "scale-100"}`}
-                    onClick={() => {
-                      setAnimatingBookmarkId(id);
-                      setBookmarkedIds((prev) =>
-                        prev.includes(id)
-                          ? prev.filter((value) => value !== id)
-                          : [...prev, id],
-                      );
-                      setTimeout(() => setAnimatingBookmarkId(null), 300);
-                    }}
+                    onClick={() => toggleBookmark(id)}
                     aria-pressed={bookmarkedIds.includes(id)}
                   >
                     {bookmarkedIds.includes(id) ? "★ Saved" : "☆ Save"}
@@ -1037,6 +1206,7 @@ export default function HomePage() {
                   </p>
                 )}
               </article>
+              </SwipeableJobCard>
             </li>
           );
         })}
@@ -1098,6 +1268,19 @@ export default function HomePage() {
         onRemove={(id) => setCompareIds((prev) => prev.filter((v) => v !== id))}
         onClear={() => setCompareIds([])}
       />
+
+      {cancelTargetId !== null && (
+        <CancelJobConfirmModal
+          jobId={String(cancelTargetId)}
+          loading={cancelLoading}
+          onClose={() => {
+            if (!cancelLoading) {
+              setCancelTargetId(null);
+            }
+          }}
+          onConfirm={() => void handleConfirmCancelJob()}
+        />
+      )}
     </section>
   );
 }
