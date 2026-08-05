@@ -20,8 +20,11 @@ import {
 import {
   type StellarNetwork,
   getPersistedNetwork,
+  getExplicitNetwork,
   getNetworkConfig,
 } from "@/lib/network-config";
+import { recordRecentContractInteraction } from "@/lib/recent-contract-interactions";
+import { classifyError, reportContractTx, reportRpcError } from "@/lib/metrics-client";
 
 function getActiveNetwork(): StellarNetwork {
   if (typeof window !== "undefined") {
@@ -39,8 +42,7 @@ const getRpcUrl = () => getNetworkConfig(getActiveNetwork()).rpcUrl;
 export type { StellarNetwork };
 
 export function getConfiguredNetwork(): StellarNetwork | null {
-  const network = getActiveNetwork();
-  return network;
+  return getExplicitNetwork();
 }
 
 const getNetworkPassphrase = () => getNetworkConfig(getActiveNetwork()).passphrase;
@@ -101,7 +103,40 @@ export async function signTransaction(xdrValue: string): Promise<string> {
 
 const READONLY_SOURCE = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 
+/**
+ * Instrumented entry point: records invocation outcome and latency for the
+ * Prometheus/Grafana dashboards before handing the result back unchanged.
+ */
 export async function callContract(
+  contractId: string,
+  method: string,
+  args: xdr.ScVal[],
+  options?: { readOnly?: boolean; pollTimeout?: number },
+): Promise<TransactionResult> {
+  const network = getActiveNetwork();
+  const startedAt = Date.now();
+
+  try {
+    const result = await invokeContract(contractId, method, args, options);
+    if (!options?.readOnly) {
+      reportContractTx(
+        method,
+        result.status === "ERROR" ? "error" : "success",
+        network,
+        Date.now() - startedAt,
+      );
+    }
+    return result;
+  } catch (error) {
+    reportRpcError(classifyError(error), network);
+    if (!options?.readOnly) {
+      reportContractTx(method, "error", network, Date.now() - startedAt);
+    }
+    throw error;
+  }
+}
+
+async function invokeContract(
   contractId: string,
   method: string,
   args: xdr.ScVal[],
@@ -159,7 +194,24 @@ export async function callContract(
   const signedTx = TransactionBuilder.fromXDR(signedXdr, networkPassphrase);
   const sent = await server.sendTransaction(signedTx);
 
+  if (sent.hash) {
+    recordRecentContractInteraction({
+      hash: sent.hash,
+      status: "PENDING",
+      timestamp: Date.now(),
+      method,
+    });
+  }
+
   if (sent.status === "ERROR") {
+    if (sent.hash) {
+      recordRecentContractInteraction({
+        hash: sent.hash,
+        status: "ERROR",
+        timestamp: Date.now(),
+        method,
+      });
+    }
     throw new Error(sent.errorResult?.toXDR().toString() ?? "Contract invocation failed.");
   }
 
@@ -173,10 +225,22 @@ export async function callContract(
       const status = await server.getTransaction(sent.hash);
 
       if (status.status === rpc.Api.GetTransactionStatus.SUCCESS) {
+        recordRecentContractInteraction({
+          hash: sent.hash,
+          status: "SUCCESS",
+          timestamp: Date.now(),
+          method,
+        });
         return { status: "SUCCESS", hash: sent.hash };
       }
 
       if (status.status === rpc.Api.GetTransactionStatus.FAILED) {
+        recordRecentContractInteraction({
+          hash: sent.hash,
+          status: "ERROR",
+          timestamp: Date.now(),
+          method,
+        });
         return {
           status: "ERROR",
           hash: sent.hash,
@@ -188,6 +252,15 @@ export async function callContract(
     throw new Error(
       `Transaction timed out after ${pollTimeout}ms. Hash: ${sent.hash}`,
     );
+  }
+
+  if (sent.hash) {
+    recordRecentContractInteraction({
+      hash: sent.hash,
+      status: "SUCCESS",
+      timestamp: Date.now(),
+      method,
+    });
   }
 
   return { status: "SUCCESS", hash: sent.hash };
@@ -207,4 +280,15 @@ export function getExplorerTxUrl(txHash: string): string {
 export function truncateAddress(address: string, chars = 4): string {
   if (!address || address.length <= chars * 2 + 3) return address;
   return `${address.slice(0, chars + 2)}...${address.slice(-chars)}`;
+}
+
+/** Stellar account (G…) or contract (C…) StrKey — 56 chars, base32 alphabet. */
+const STELLAR_ADDRESS_RE = /^[GC][A-Z2-7]{55}$/;
+
+/**
+ * Validates a Stellar address string (account or contract).
+ * Matches the format used across profile/messages routes.
+ */
+export function isValidStellarAddress(address: string): boolean {
+  return STELLAR_ADDRESS_RE.test(address.trim());
 }
