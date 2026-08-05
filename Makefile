@@ -1,7 +1,9 @@
 DOCKER = docker
 COMPOSE = docker compose
 
-.PHONY: help up down build test-contract coverage-contract lint-frontend dev clean
+.PHONY: help up down build test-contract coverage-contract lint-frontend dev clean monitoring-up monitoring-down
+
+COMPOSE_MONITORING = $(COMPOSE) -f docker-compose.yml -f monitoring/docker-compose.monitoring.yml
 
 help:
 	@echo "StellarWork Development Commands"
@@ -15,6 +17,8 @@ help:
 	@echo "make test-frontend    Run frontend unit tests"
 	@echo "make lint-frontend    Run ESLint on frontend"
 	@echo "make typecheck        Run TypeScript type checking"
+	@echo "make monitoring-up    Start Prometheus + Grafana + Alertmanager"
+	@echo "make monitoring-down  Stop the monitoring stack"
 	@echo "make clean            Remove Docker volumes and cached data"
 
 up:
@@ -43,6 +47,13 @@ lint-frontend:
 
 typecheck:
 	cd frontend && npm run typecheck
+
+monitoring-up:
+	$(COMPOSE_MONITORING) up -d
+	@echo "Grafana: http://localhost:3001 (admin/admin) | Prometheus: http://localhost:9090"
+
+monitoring-down:
+	$(COMPOSE_MONITORING) down
 
 clean:
 	$(COMPOSE) down -v
