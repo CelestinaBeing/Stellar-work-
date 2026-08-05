@@ -11,7 +11,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { CheckCircle2, XCircle } from "lucide-react";
 
 type ToastVariant = "success" | "error";
 
@@ -122,6 +121,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     </ToastContext.Provider>
   );
 }
+
+// ─── useToast ────────────────────────────────────────────────────────────────
 
 export function useToast() {
   const context = useContext(ToastContext);
