@@ -14,7 +14,7 @@ import {
 
 type ToastVariant = "success" | "error";
 
-type ToastRecord = {
+type ToastItem = {
   id: string;
   message: string;
   variant: ToastVariant;
@@ -30,7 +30,7 @@ const ToastContext = createContext<ToastContextValue | null>(null);
 const AUTO_DISMISS_MS = 3500;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
-  const [toasts, setToasts] = useState<ToastRecord[]>([]);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const idPrefix = useId();
 
@@ -88,38 +88,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      {/*
-       * Two separate live regions so screen readers use the correct politeness:
-       * - success → polite (aria-live="polite", role="status")
-       * - error   → assertive (aria-live="assertive", role="alert")
-       * aria-atomic="true" ensures each toast is announced as a complete unit.
-       */}
-      <div className="pointer-events-none fixed top-4 right-4 z-[100] flex w-full max-w-sm flex-col gap-2">
-        {/* Polite region — success toasts */}
-        <div
-          aria-live="polite"
-          aria-atomic="true"
-          aria-relevant="additions"
-          role="status"
-          className="contents"
-        >
-          {successToasts.map((toast) => (
-            <ToastItem key={toast.id} toast={toast} onDismiss={dismiss} />
-          ))}
-        </div>
-
-        {/* Assertive region — error toasts */}
-        <div
-          aria-live="assertive"
-          aria-atomic="true"
-          aria-relevant="additions"
-          role="alert"
-          className="contents"
-        >
-          {errorToasts.map((toast) => (
-            <ToastItem key={toast.id} toast={toast} onDismiss={dismiss} />
-          ))}
-        </div>
       <div
         aria-live="polite"
         aria-relevant="additions"

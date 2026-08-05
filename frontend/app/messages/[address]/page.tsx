@@ -14,6 +14,7 @@ import { useWallet } from "@/lib/wallet-context";
 import { useMessaging } from "@/lib/messaging-context";
 import CallButton from "@/components/CallButton";
 import CallHistory from "@/components/CallHistory";
+import Spinner from "@/components/Spinner";
 import TruncatedAddress from "@/components/TruncatedAddress";
 import {
   loadThread,
@@ -531,7 +532,7 @@ export default function ConversationPage() {
               className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-900 text-white transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
             >
               {sending ? (
-                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" aria-hidden="true" />
+                <Spinner size={14} color="currentColor" label="Sending message" />
               ) : (
                 <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
                   <path d="M2.293 13.707a1 1 0 010-1.414L10.586 4H6a1 1 0 110-2h7a1 1 0 011 1v7a1 1 0 11-2 0V5.414l-8.293 8.293a1 1 0 01-1.414 0z" />

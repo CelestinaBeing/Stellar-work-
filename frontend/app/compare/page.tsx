@@ -1,5 +1,6 @@
 "use client";
 
+import LoadingState from "@/components/LoadingState";
 import { getJob } from "@/lib/contract";
 import TruncatedAddress from "@/components/TruncatedAddress";
 import { formatDeadline, toXlm } from "@/lib/format";
@@ -117,11 +118,7 @@ export default function ComparePage() {
         </Link>
       </div>
 
-      {loading && (
-        <p className="text-sm text-slate-600" role="status">
-          Loading jobs…
-        </p>
-      )}
+      {loading && <LoadingState text="Loading jobs…" />}
 
       {error && (
         <div
