@@ -32,6 +32,14 @@ fn new_escrow<'a>(env: &'a Env, contract_id: &Address) -> EscrowContractClient<'
     EscrowContractClient::new(env, contract_id)
 }
 
+fn dummy_title(env: &Env) -> BytesN<64> {
+    BytesN::from_array(env, &[0u8; 64])
+}
+
+fn dummy_category(env: &Env) -> Symbol {
+    Symbol::new(env, "development")
+}
+
 #[test]
 fn test_initialize() {
     let env = Env::default();
@@ -49,7 +57,7 @@ fn test_post_and_get_job() {
     let deadline: u64 = 1000;
     let amount: i128 = 100_0000000;
 
-    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token);
+    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token, &dummy_title(&env), &dummy_category(&env));
     assert_eq!(job_id, 1);
     assert_eq!(escrow.get_job_count(), 1);
 
@@ -68,7 +76,7 @@ fn test_full_job_lifecycle() {
     let deadline: u64 = 1000;
     let amount: i128 = 100_0000000;
 
-    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token);
+    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token, &dummy_title(&env), &dummy_category(&env));
     escrow.accept_job(&freelancer, &job_id);
     assert_eq!(escrow.get_job(&job_id).status, JobStatus::InProgress);
     escrow.submit_work(&freelancer, &job_id);
@@ -87,7 +95,7 @@ fn test_cancel_job() {
     let deadline: u64 = 1000;
     let amount: i128 = 100_0000000;
 
-    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token);
+    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token, &dummy_title(&env), &dummy_category(&env));
     escrow.cancel_job(&client, &job_id);
     assert_eq!(escrow.get_job(&job_id).status, JobStatus::Cancelled);
 }
@@ -101,7 +109,7 @@ fn test_cancel_with_rebate_within_grace_period() {
     let deadline: u64 = 1000;
     let amount: i128 = 100_0000000;
 
-    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token);
+    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token, &dummy_title(&env), &dummy_category(&env));
     let info = escrow.get_cancellation_rebate_info(&job_id);
     assert!(info.is_eligible);
     escrow.cancel_with_rebate(&client, &job_id);
@@ -117,7 +125,7 @@ fn test_get_cancellation_rebate_info_eligible() {
     let deadline: u64 = 1000;
     let amount: i128 = 100_0000000;
 
-    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token);
+    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token, &dummy_title(&env), &dummy_category(&env));
     let info = escrow.get_cancellation_rebate_info(&job_id);
     assert!(info.is_eligible);
     assert_eq!(info.grace_deadline, CANCELLATION_GRACE_PERIOD);
@@ -132,7 +140,7 @@ fn test_freelancer_cancel_job() {
     let deadline: u64 = 1000;
     let amount: i128 = 100_0000000;
 
-    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token);
+    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token, &dummy_title(&env), &dummy_category(&env));
     escrow.accept_job(&freelancer, &job_id);
     escrow.freelancer_cancel_job(&freelancer, &job_id);
     assert_eq!(escrow.get_job(&job_id).status, JobStatus::Cancelled);
@@ -147,7 +155,7 @@ fn test_enforce_deadline() {
     let deadline: u64 = 10;
     let amount: i128 = 100_0000000;
 
-    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token);
+    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token, &dummy_title(&env), &dummy_category(&env));
     env.ledger().set_sequence_number(deadline as u32 + 1);
     escrow.enforce_deadline(&client, &job_id);
     assert_eq!(escrow.get_job(&job_id).status, JobStatus::Cancelled);
@@ -162,7 +170,7 @@ fn test_dispute_and_resolve() {
     let deadline: u64 = 1000;
     let amount: i128 = 100_0000000;
 
-    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token);
+    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token, &dummy_title(&env), &dummy_category(&env));
     escrow.accept_job(&freelancer, &job_id);
     escrow.raise_dispute(&client, &job_id);
     assert_eq!(escrow.get_job(&job_id).status, JobStatus::Disputed);
@@ -179,7 +187,7 @@ fn test_admin_operations() {
     let deadline: u64 = 1000;
     let amount: i128 = 100_0000000;
 
-    let _job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token);
+    let _job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token, &dummy_title(&env), &dummy_category(&env));
     let all_jobs = escrow.admin_get_all_jobs(&admin);
     assert_eq!(all_jobs.len(), 1);
     let open_jobs = escrow.admin_get_jobs_by_status(&admin, &JobStatus::Open);
@@ -229,7 +237,7 @@ fn test_fees_and_withdraw() {
     let deadline: u64 = 1000;
     let amount: i128 = 100_0000000;
 
-    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token);
+    let job_id = escrow.post_job(&client, &amount, &desc_hash, &100u32, &deadline, &token, &dummy_title(&env), &dummy_category(&env));
     escrow.accept_job(&freelancer, &job_id);
     escrow.submit_work(&freelancer, &job_id);
     escrow.approve_work(&client, &job_id);
@@ -260,7 +268,7 @@ fn test_milestones() {
     };
     let milestones = vec![&env, m1, m2];
 
-    let job_id = escrow.create_job_with_milestones(&client, &milestones, &deadline, &token);
+    let job_id = escrow.create_job_with_milestones(&client, &milestones, &deadline, &token, &dummy_title(&env), &dummy_category(&env));
     assert_eq!(job_id, 1);
 
     escrow.accept_job(&freelancer, &job_id);
@@ -293,7 +301,7 @@ fn test_complete_milestone_with_fees() {
     };
     let milestones = vec![&env, m1, m2];
 
-    let job_id = escrow.create_job_with_milestones(&client, &milestones, &deadline, &token);
+    let job_id = escrow.create_job_with_milestones(&client, &milestones, &deadline, &token, &dummy_title(&env), &dummy_category(&env));
     assert_eq!(job_id, 1);
 
     escrow.accept_job(&freelancer, &job_id);
@@ -331,7 +339,7 @@ fn test_trusted_forwarder() {
 
     let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
     let deadline: u64 = 1000;
-    let job_id = escrow.post_job(&client, &100_0000000i128, &desc_hash, &100u32, &deadline, &token);
+    let job_id = escrow.post_job(&client, &100_0000000i128, &desc_hash, &100u32, &deadline, &token, &dummy_title(&env), &dummy_category(&env));
     escrow.relay_cancel_job(&forwarder, &client, &job_id);
     assert_eq!(escrow.get_job(&job_id).status, JobStatus::Cancelled);
 }
@@ -352,7 +360,7 @@ fn test_sla_config_creation() {
         auto_escalate: true,
     };
 
-    let job_id = escrow.post_job_with_sla(&client, &amount, &desc_hash, &100u32, &deadline, &token, &sla_config);
+    let job_id = escrow.post_job_with_sla(&client, &amount, &desc_hash, &100u32, &deadline, &token, &dummy_title(&env), &dummy_category(&env), &sla_config);
     assert_eq!(job_id, 1);
 
     let status = escrow.get_sla_status(&job_id);
@@ -383,7 +391,7 @@ fn test_sla_get_sla_status_returns_correct_values() {
         auto_escalate: false,
     };
 
-    let job_id = escrow.post_job_with_sla(&client, &amount, &desc_hash, &100u32, &deadline, &token, &sla_config);
+    let job_id = escrow.post_job_with_sla(&client, &amount, &desc_hash, &100u32, &deadline, &token, &dummy_title(&env), &dummy_category(&env), &sla_config);
     let status_before = escrow.get_sla_status(&job_id);
     assert_eq!(status_before.accepted_at, 0);
 
@@ -421,7 +429,7 @@ fn test_sla_penalty_applied_on_late_delivery() {
         auto_escalate: true,
     };
 
-    let job_id = escrow.post_job_with_sla(&client, &amount, &desc_hash, &100u32, &deadline, &token, &sla_config);
+    let job_id = escrow.post_job_with_sla(&client, &amount, &desc_hash, &100u32, &deadline, &token, &dummy_title(&env), &dummy_category(&env), &sla_config);
     escrow.accept_job(&freelancer, &job_id);
 
     let current = env.ledger().sequence();
@@ -457,7 +465,7 @@ fn test_sla_breach_event_emitted() {
         auto_escalate: true,
     };
 
-    let job_id = escrow.post_job_with_sla(&client, &amount, &desc_hash, &100u32, &deadline, &token, &sla_config);
+    let job_id = escrow.post_job_with_sla(&client, &amount, &desc_hash, &100u32, &deadline, &token, &dummy_title(&env), &dummy_category(&env), &sla_config);
     escrow.accept_job(&freelancer, &job_id);
 
     let current = env.ledger().sequence();
@@ -483,14 +491,14 @@ fn test_get_freelancer_jobs() {
     assert_eq!(initial_jobs.len(), 0);
 
     // Post and accept first job
-    let job_id_1 = escrow.post_job(&client, &100_0000000i128, &desc_hash, &100u32, &deadline, &token);
+    let job_id_1 = escrow.post_job(&client, &100_0000000i128, &desc_hash, &100u32, &deadline, &token, &dummy_title(&env), &dummy_category(&env));
     escrow.accept_job(&freelancer, &job_id_1);
     let jobs_after_one = escrow.get_freelancer_jobs(&freelancer);
     assert_eq!(jobs_after_one.len(), 1);
     assert_eq!(jobs_after_one.get(0).unwrap(), job_id_1);
 
     // Post and accept second job
-    let job_id_2 = escrow.post_job(&client, &200_0000000i128, &desc_hash, &100u32, &deadline, &token);
+    let job_id_2 = escrow.post_job(&client, &200_0000000i128, &desc_hash, &100u32, &deadline, &token, &dummy_title(&env), &dummy_category(&env));
     escrow.accept_job(&freelancer, &job_id_2);
     let jobs_after_two = escrow.get_freelancer_jobs(&freelancer);
     assert_eq!(jobs_after_two.len(), 2);
@@ -517,7 +525,7 @@ fn test_get_job_status_counts() {
     assert_eq!(counts.open, 0);
 
     // One Open job
-    let job1 = escrow.post_job(&client, &100_0000000i128, &desc_hash, &100u32, &deadline, &token);
+    let job1 = escrow.post_job(&client, &100_0000000i128, &desc_hash, &100u32, &deadline, &token, &dummy_title(&env), &dummy_category(&env));
     let counts = escrow.get_job_status_counts();
     assert_eq!(counts.total, 1);
     assert_eq!(counts.open, 1);
@@ -536,7 +544,7 @@ fn test_get_job_status_counts() {
     assert_eq!(counts.submitted_for_review, 1);
 
     // Second job: Open → Cancelled
-    let job2 = escrow.post_job(&client, &50_0000000i128, &desc_hash, &100u32, &deadline, &token);
+    let job2 = escrow.post_job(&client, &50_0000000i128, &desc_hash, &100u32, &deadline, &token, &dummy_title(&env), &dummy_category(&env));
     escrow.cancel_job(&client, &job2);
     let counts = escrow.get_job_status_counts();
     assert_eq!(counts.total, 2);
@@ -544,7 +552,7 @@ fn test_get_job_status_counts() {
     assert_eq!(counts.cancelled, 1);
 
     // Third job: Open → Disputed via accept+raise
-    let job3 = escrow.post_job(&client, &75_0000000i128, &desc_hash, &100u32, &deadline, &token);
+    let job3 = escrow.post_job(&client, &75_0000000i128, &desc_hash, &100u32, &deadline, &token, &dummy_title(&env), &dummy_category(&env));
     escrow.accept_job(&freelancer, &job3);
     escrow.raise_dispute(&client, &job3);
     let counts = escrow.get_job_status_counts();

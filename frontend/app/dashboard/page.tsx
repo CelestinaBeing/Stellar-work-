@@ -631,7 +631,14 @@ export default function DashboardPage() {
                     <li key={id}>
                       <article className="interactive-card h-full p-4">
                         <div className="flex items-start justify-between gap-2">
-                          <h3 className="font-medium">Job #{id}</h3>
+                          <div>
+                            <h3 className="font-medium">{job.title || `Job #${id}`}</h3>
+                            {job.category && (
+                              <span className="mt-0.5 inline-block rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                                {job.category}
+                              </span>
+                            )}
+                          </div>
                           <StatusPill status={job.status} />
                         </div>
                         <div className="mt-2 space-y-1 text-sm text-slate-600">
@@ -1060,6 +1067,10 @@ function JobCard({
               checked={isSelected}
               onChange={() => onToggleSelect(id)}
               className="h-4 w-4 rounded border-slate-300 text-emerald-600"
+              aria-label={`Select Job #${id} for batch approval`}
+    <article className={`interactive-card h-full p-4 ${isSelected ? "ring-2 ring-red-400" : ""}`}>
+      <div className="flex items-start justify-between gap-2">          <div className="flex items-center gap-2">
+          {onToggleSelect && (
             />
           )}
           {onToggleSelectBulk && (
@@ -1108,7 +1119,14 @@ function JobCard({
               className="h-4 w-4 rounded border-slate-300 accent-red-600 cursor-pointer"
             />
           )}
-          <h3 className="font-medium">Job #{id}</h3>
+          <div>
+            <h3 className="font-medium">{job.title || `Job #${id}`}</h3>
+            {job.category && (
+              <span className="mt-0.5 inline-block rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                {job.category}
+              </span>
+            )}
+          </div>
         </div>
         <StatusPill status={job.status} />
       </div>

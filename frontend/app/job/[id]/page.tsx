@@ -527,7 +527,14 @@ function JobDetailPageContent() {
         <Link href="/" className="text-sm text-blue-600 hover:underline">
           Back
         </Link>
-        <h1 className="text-2xl font-semibold">Job #{id}</h1>
+        <h1 className="text-2xl font-semibold">
+          {job.title || `Job #${id}`}
+        </h1>
+        {job.category && (
+          <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">
+            {job.category}
+          </span>
+        )}
       </div>
 
       {error && (

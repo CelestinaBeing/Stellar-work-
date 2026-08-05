@@ -89,6 +89,8 @@ pub struct Job {
     pub token: Address,
     pub revision_count: u32,
     pub submitted_at: u64,
+    pub title: BytesN<64>,
+    pub category: Symbol,
 }
 
 /// A single milestone within a milestone-based job.
@@ -693,6 +695,9 @@ impl EscrowContract {
         desc_hash: BytesN<32>,
         description_payload_len: u32,
         deadline: u64,
+        token_address: Address,
+        title: BytesN<64>,
+        category: Symbol,
         token: Address,
     ) -> u64 {
         if amount <= 0 {
@@ -775,8 +780,32 @@ impl EscrowContract {
             token: job_token,
             revision_count: 0,
             submitted_at: 0,
+            title,
+            category,
         };
 
+    pub fn post_job_with_sla(
+        env: Env,
+        client: Address,
+        amount: i128,
+        desc_hash: BytesN<32>,
+        description_payload_len: u32,
+        deadline: u64,
+        token_address: Address,
+        title: BytesN<64>,
+        category: Symbol,
+        sla_config: SLAConfig,
+    ) -> u64 {
+        let job_id = Self::post_job(
+            env.clone(),
+            client,
+            amount,
+            desc_hash,
+            description_payload_len,
+            deadline,
+            token_address,
+            title,
+            category,
         set_job(&e, job_id, &job);
         
         let mut all_ids: Vec<u64> = e.storage().persistent().get(&DataKey::AllJobIds).unwrap_or(Vec::new(&e));
@@ -12413,6 +12442,8 @@ mod test {
         milestones: Vec<Milestone>,
         deadline: u64,
         token_address: Address,
+        title: BytesN<64>,
+        category: Symbol,
     ) -> u64 {
         client.require_auth();
         check_access(&env, &client);
@@ -12464,6 +12495,8 @@ mod test {
             token: token_address,
             revision_count: 0,
             submitted_at: 0,
+            title,
+            category,
         };
         put_job(&env, count, &job);
         count
