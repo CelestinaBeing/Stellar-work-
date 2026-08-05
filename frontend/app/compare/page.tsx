@@ -1,10 +1,11 @@
 "use client";
 
 import { getJob } from "@/lib/contract";
+import TruncatedAddress from "@/components/TruncatedAddress";
 import { formatDeadline, toXlm } from "@/lib/format";
 import type { Job } from "@/lib/types";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 
 interface JobEntry {
@@ -12,8 +13,13 @@ interface JobEntry {
   job: Job;
 }
 
-function Field({ label, values }: { label: string; values: string[] }) {
-  const allSame = values.every((v) => v === values[0]);
+function Field({ label, values }: { label: string; values: ReactNode[] }) {
+  const stringValues = values.map((v) =>
+    typeof v === "string" || typeof v === "number" ? String(v) : null,
+  );
+  const comparable = stringValues.every((v) => v !== null);
+  const allSame =
+    comparable && stringValues.every((v) => v === stringValues[0]);
   return (
     <tr>
       <th
@@ -26,7 +32,9 @@ function Field({ label, values }: { label: string; values: string[] }) {
         <td
           key={index}
           className={`border border-slate-200 px-3 py-2 text-sm ${
-            !allSame && values.length > 1 ? "bg-yellow-50 font-semibold" : ""
+            !allSame && comparable && values.length > 1
+              ? "bg-yellow-50 font-semibold"
+              : ""
           }`}
         >
           {value}
@@ -187,16 +195,21 @@ export default function ComparePage() {
                 />
                 <Field
                   label="Client"
-                  values={entries.map(({ job }) =>
-                    `${job.client.slice(0, 8)}…${job.client.slice(-4)}`,
-                  )}
+                  values={entries.map(({ job }) => (
+                    <TruncatedAddress key={job.client} address={job.client} />
+                  ))}
                 />
                 <Field
                   label="Freelancer"
                   values={entries.map(({ job }) =>
-                    job.freelancer
-                      ? `${job.freelancer.slice(0, 8)}…${job.freelancer.slice(-4)}`
-                      : "Unassigned",
+                    job.freelancer ? (
+                      <TruncatedAddress
+                        key={job.freelancer}
+                        address={job.freelancer}
+                      />
+                    ) : (
+                      "Unassigned"
+                    ),
                   )}
                 />
                 <Field
@@ -207,9 +220,9 @@ export default function ComparePage() {
                 />
                 <Field
                   label="Token"
-                  values={entries.map(({ job }) =>
-                    `${job.token.slice(0, 8)}…${job.token.slice(-4)}`,
-                  )}
+                  values={entries.map(({ job }) => (
+                    <TruncatedAddress key={job.token} address={job.token} />
+                  ))}
                 />
               </tbody>
             </table>
