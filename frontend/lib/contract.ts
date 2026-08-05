@@ -345,6 +345,22 @@ export async function approveMilestone(
 }
 
 /**
+ * Complete a milestone by index, releasing payment to the freelancer
+ * with the platform fee deducted. Only the client may call this.
+ */
+export async function completeMilestone(
+  client: string,
+  jobId: string,
+  milestoneIndex: number,
+) {
+  return callContract(getActiveContractId(), "complete_milestone", [
+    nativeToScVal(client, { type: "address" }),
+    nativeToScVal(jobId, { type: "u64" }),
+    nativeToScVal(milestoneIndex, { type: "u32" }),
+  ]);
+}
+
+/**
  * Fetch all milestones for a job.
  * Returns null if the job has no milestones (regular job).
  */
