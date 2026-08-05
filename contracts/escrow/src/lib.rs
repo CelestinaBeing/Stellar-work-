@@ -9675,3 +9675,6 @@ mod test {
     }
 
 }
+
+#[cfg(test)]
+mod benchmarks;
