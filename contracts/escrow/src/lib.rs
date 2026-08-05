@@ -1696,6 +1696,16 @@ impl EscrowContract {
             panic_with_error!(&e, Error::InvalidDeadline);
         }
 
+        // Only allow extensions for jobs that are currently InProgress
+        if job.status != JobStatus::InProgress {
+            return Err(Error::InvalidJobStatus);
+        }
+
+        // Optional freelancer consent must match the assigned freelancer when provided
+        if freelancer_consent.len() > 0 {
+            let consent_addr = freelancer_consent.get(0).unwrap();
+            if consent_addr != job.freelancer {
+                return Err(Error::Unauthorized);
         if let Some(freelancer) = &freelancer_consent {
             if job.freelancer != Option::Some(freelancer.clone()) {
                 panic_with_error!(&e, Error::NoFreelancerAssigned);
@@ -1704,11 +1714,20 @@ impl EscrowContract {
             require_active_access(&e, freelancer);
         }
 
+        // New deadline must be strictly after the current stored deadline
+        if new_deadline <= job.deadline {
+            return Err(Error::InvalidDeadline);
+        }
+
         let old_deadline = job.deadline;
         job.deadline = new_deadline;
         set_job(&e, job_id, &job);
         bump_instance_ttl(&e);
 
+        // Emit a dedicated event so indexers can pick up deadline changes
+        env.events().publish((symbol_short!("deadline_extended"),), (job_id, old_deadline, new_deadline));
+
+        Ok(())
         e.events().publish(
             (Symbol::new(&e, "deadline_extended"),),
             (job_id, client, old_deadline, new_deadline),
