@@ -502,3 +502,52 @@ fn test_get_freelancer_jobs() {
     let other_jobs = escrow.get_freelancer_jobs(&other_freelancer);
     assert_eq!(other_jobs.len(), 0);
 }
+
+#[test]
+fn test_get_job_status_counts() {
+    let env = Env::default();
+    let (admin, client, freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let desc_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let deadline: u64 = 1000;
+
+    // Empty state
+    let counts = escrow.get_job_status_counts();
+    assert_eq!(counts.total, 0);
+    assert_eq!(counts.open, 0);
+
+    // One Open job
+    let job1 = escrow.post_job(&client, &100_0000000i128, &desc_hash, &100u32, &deadline, &token);
+    let counts = escrow.get_job_status_counts();
+    assert_eq!(counts.total, 1);
+    assert_eq!(counts.open, 1);
+    assert_eq!(counts.in_progress, 0);
+
+    // Accept → InProgress
+    escrow.accept_job(&freelancer, &job1);
+    let counts = escrow.get_job_status_counts();
+    assert_eq!(counts.total, 1);
+    assert_eq!(counts.open, 0);
+    assert_eq!(counts.in_progress, 1);
+
+    // Submit → SubmittedForReview
+    escrow.submit_work(&freelancer, &job1);
+    let counts = escrow.get_job_status_counts();
+    assert_eq!(counts.submitted_for_review, 1);
+
+    // Second job: Open → Cancelled
+    let job2 = escrow.post_job(&client, &50_0000000i128, &desc_hash, &100u32, &deadline, &token);
+    escrow.cancel_job(&client, &job2);
+    let counts = escrow.get_job_status_counts();
+    assert_eq!(counts.total, 2);
+    assert_eq!(counts.submitted_for_review, 1);
+    assert_eq!(counts.cancelled, 1);
+
+    // Third job: Open → Disputed via accept+raise
+    let job3 = escrow.post_job(&client, &75_0000000i128, &desc_hash, &100u32, &deadline, &token);
+    escrow.accept_job(&freelancer, &job3);
+    escrow.raise_dispute(&client, &job3);
+    let counts = escrow.get_job_status_counts();
+    assert_eq!(counts.total, 3);
+    assert_eq!(counts.disputed, 1);
+}
