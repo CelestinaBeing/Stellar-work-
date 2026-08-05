@@ -1,5 +1,6 @@
 "use client";
 
+import CancelJobConfirmModal from "@/components/CancelJobConfirmModal";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import InfoTooltip from "@/components/InfoTooltip";
 import LoadingState from "@/components/LoadingState";
@@ -452,7 +453,7 @@ export default function JobDetailPage() {
   return (
     <section className="space-y-6 pb-6 sm:pb-6">
       {/* Screen reader announcer for job status transitions */}
-      <p role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+      <p aria-live="polite" aria-atomic="true" className="sr-only">
         {statusAnnouncement}
       </p>
 
@@ -829,15 +830,22 @@ export default function JobDetailPage() {
       )}
 
       {/* Confirmation dialogs */}
-      {pendingAction && (
+      {pendingAction === "cancelJob" ? (
+        <CancelJobConfirmModal
+          jobId={id}
+          loading={loading}
+          onClose={() => setPendingAction(null)}
+          onConfirm={() => void executeAction("cancelJob")}
+        />
+      ) : pendingAction !== null ? (
         <ConfirmDialog
-          open={pendingAction !== null}
+          open
           {...DIALOG_CONFIG[pendingAction]}
           loading={loading}
           onConfirm={() => void executeAction(pendingAction)}
           onCancel={() => setPendingAction(null)}
         />
-      )}
+      ) : null}
     </section>
   );
 }

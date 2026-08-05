@@ -3,6 +3,7 @@
 import EmptyState from "@/components/EmptyState";
 import ErrorBanner from "@/components/ErrorBanner";
 import NoResultsState from "@/components/NoResultsState";
+import PullToRefresh from "@/components/PullToRefresh";
 import SectionCard from "@/components/SectionCard";
 import TransactionRowSkeleton from "@/components/TransactionRowSkeleton";
 import TruncatedAddress from "@/components/TruncatedAddress";
@@ -200,6 +201,8 @@ export default function TransactionsPage() {
   // ── render ────────────────────────────────────────────────────────
   return (
     <section className="space-y-6">
+      <PullToRefresh onRefresh={fetchJobs} label="Refresh transactions" />
+
       {/* Live region for screen readers */}
       <p
         ref={announcerRef}

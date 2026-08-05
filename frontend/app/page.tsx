@@ -4,12 +4,15 @@ import ErrorBanner from "@/components/ErrorBanner";
 import EmptyState from "@/components/EmptyState";
 import InfoTooltip from "@/components/InfoTooltip";
 import NoResultsState from "@/components/NoResultsState";
+import PullToRefresh from "@/components/PullToRefresh";
 import JobCardSkeleton from "@/components/JobCardSkeleton";
 import SectionCard from "@/components/SectionCard";
 import TruncatedAddress from "@/components/TruncatedAddress";
 import ComparisonBar from "@/components/ComparisonBar";
+import CancelJobConfirmModal from "@/components/CancelJobConfirmModal";
+import SwipeableJobCard from "@/components/SwipeableJobCard";
 import JobFilterPanel, { DEFAULT_FILTERS, type JobFilters } from "@/components/JobFilterPanel";
-import { acceptJob, getDescriptionCid, getJob, getJobCount } from "@/lib/contract";
+import { acceptJob, cancelJob, getDescriptionCid, getJob, getJobCount } from "@/lib/contract";
 import { fetchFromIpfs } from "@/lib/ipfs-service";
 import { useNotifications } from "@/lib/notifications-context";
 import {
@@ -91,6 +94,8 @@ export default function HomePage() {
   const [showBookmarkedOnly, setShowBookmarkedOnly] = useState(false);
   const [bookmarkedIds, setBookmarkedIds] = useState<number[]>([]);
   const [animatingBookmarkId, setAnimatingBookmarkId] = useState<number | null>(null);
+  const [cancelTargetId, setCancelTargetId] = useState<number | null>(null);
+  const [cancelLoading, setCancelLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState(() => {
     if (typeof window === "undefined") return "";
     return new URLSearchParams(window.location.search).get("q") ?? "";
@@ -167,11 +172,6 @@ export default function HomePage() {
     }
     sessionStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
   }, [viewMode]);
-
-  const totalPages = useMemo(
-    () => Math.max(1, Math.ceil(visibleJobs.length / pageSize)),
-    [pageSize, visibleJobs],
-  );
 
   useEffect(() => {
     try {
@@ -422,6 +422,11 @@ export default function HomePage() {
     });
   }, [advancedFilters, bookmarkedIds, getDescription, jobs, normalizedSearchTerm, showBookmarkedOnly, statusFilter]);
 
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(visibleJobs.length / pageSize)),
+    [pageSize, visibleJobs],
+  );
+
   useEffect(() => {
     if (loading) return;
     const currentSignature = `${showBookmarkedOnly}:${normalizedSearchTerm}:${visibleJobs.map(({ id }) => id).join(",")}`;
@@ -440,6 +445,69 @@ export default function HomePage() {
       return next;
     });
   }
+
+  const handleAcceptJob = useCallback(
+    async (id: number) => {
+      setError(null);
+      if (!wallet) {
+        return;
+      }
+      setActionLoading(id);
+      try {
+        const result = await acceptJob(wallet, String(id));
+        if (result.hash) {
+          setLatestTxHash(result.hash);
+        }
+        addNotification("job_accepted", id, `You accepted Job #${id}.`);
+        await refresh();
+      } catch (e) {
+        setError(
+          e instanceof Error
+            ? e.message
+            : "Failed to accept job. Check your balance or contract state.",
+        );
+      } finally {
+        setActionLoading(null);
+      }
+    },
+    [addNotification, refresh, wallet],
+  );
+
+  const toggleBookmark = useCallback((id: number) => {
+    setAnimatingBookmarkId(id);
+    setBookmarkedIds((prev) =>
+      prev.includes(id)
+        ? prev.filter((value) => value !== id)
+        : [...prev, id],
+    );
+    setTimeout(() => setAnimatingBookmarkId(null), 300);
+  }, []);
+
+  const handleConfirmCancelJob = useCallback(async () => {
+    if (!wallet || cancelTargetId === null) {
+      return;
+    }
+    const id = cancelTargetId;
+    setError(null);
+    setCancelLoading(true);
+    try {
+      const result = await cancelJob(wallet, String(id));
+      if (result.hash) {
+        setLatestTxHash(result.hash);
+      }
+      addNotification("job_cancelled", id, `You cancelled Job #${id}.`);
+      await refresh();
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? e.message
+          : "Failed to cancel job. Check your wallet or contract state.",
+      );
+    } finally {
+      setCancelLoading(false);
+      setCancelTargetId(null);
+    }
+  }, [addNotification, cancelTargetId, refresh, wallet]);
 
   const handleSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -480,6 +548,8 @@ export default function HomePage() {
 
   return (
     <section className="space-y-6">
+      <PullToRefresh onRefresh={refresh} label="Refresh job listings" />
+
       {/* Hero Section */}
       <div className="rounded-lg border border-slate-200 bg-white p-6 md:p-8">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -871,6 +941,20 @@ export default function HomePage() {
 
           return (
             <li key={id}>
+              <SwipeableJobCard
+                jobId={id}
+                canAccept={
+                  job.status === "Open" && Boolean(wallet) && wallet !== job.client
+                }
+                canCancel={Boolean(
+                  wallet && wallet === job.client && job.status === "Open",
+                )}
+                bookmarked={bookmarkedIds.includes(id)}
+                disabled={actionLoading !== null || cancelLoading}
+                onAccept={() => void handleAcceptJob(id)}
+                onBookmark={() => toggleBookmark(id)}
+                onCancel={() => setCancelTargetId(id)}
+              >
               <article
                 className={`interactive-card h-full p-4 ${
                   viewMode === "list"
@@ -951,29 +1035,7 @@ export default function HomePage() {
                         : "bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800"
                     }`}
                     title={!wallet ? "Connect your wallet to accept jobs." : undefined}
-                    onClick={async () => {
-                      setError(null);
-                      if (!wallet) {
-                        return;
-                      }
-                      setActionLoading(id);
-                      try {
-                        const result = await acceptJob(wallet, String(id));
-                        if (result.hash) {
-                          setLatestTxHash(result.hash);
-                        }
-                        addNotification("job_accepted", id, `You accepted Job #${id}.`);
-                        await refresh();
-                      } catch (e) {
-                        setError(
-                          e instanceof Error
-                            ? e.message
-                            : "Failed to accept job. Check your balance or contract state.",
-                        );
-                      } finally {
-                        setActionLoading(null);
-                      }
-                    }}
+                    onClick={() => void handleAcceptJob(id)}
                     disabled={!wallet || actionLoading !== null}
                     aria-busy={actionLoading === id}
                   >
@@ -986,15 +1048,7 @@ export default function HomePage() {
                         ? "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
                         : "border-slate-300 text-slate-700 hover:bg-slate-50"
                     } ${animatingBookmarkId === id ? "scale-110" : "scale-100"}`}
-                    onClick={() => {
-                      setAnimatingBookmarkId(id);
-                      setBookmarkedIds((prev) =>
-                        prev.includes(id)
-                          ? prev.filter((value) => value !== id)
-                          : [...prev, id],
-                      );
-                      setTimeout(() => setAnimatingBookmarkId(null), 300);
-                    }}
+                    onClick={() => toggleBookmark(id)}
                     aria-pressed={bookmarkedIds.includes(id)}
                   >
                     {bookmarkedIds.includes(id) ? "★ Saved" : "☆ Save"}
@@ -1006,6 +1060,7 @@ export default function HomePage() {
                   </p>
                 )}
               </article>
+              </SwipeableJobCard>
             </li>
           );
         })}
@@ -1067,6 +1122,19 @@ export default function HomePage() {
         onRemove={(id) => setCompareIds((prev) => prev.filter((v) => v !== id))}
         onClear={() => setCompareIds([])}
       />
+
+      {cancelTargetId !== null && (
+        <CancelJobConfirmModal
+          jobId={String(cancelTargetId)}
+          loading={cancelLoading}
+          onClose={() => {
+            if (!cancelLoading) {
+              setCancelTargetId(null);
+            }
+          }}
+          onConfirm={() => void handleConfirmCancelJob()}
+        />
+      )}
     </section>
   );
 }

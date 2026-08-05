@@ -18,6 +18,7 @@ import ExportButton from "@/components/ExportButton";
 import InfoTooltip from "@/components/InfoTooltip";
 import JobCardSkeleton from "@/components/JobCardSkeleton";
 import NoResultsState from "@/components/NoResultsState";
+import PullToRefresh from "@/components/PullToRefresh";
 import SectionCard from "@/components/SectionCard";
 import StatusPill from "@/components/StatusPill";
 import TruncatedAddress from "@/components/TruncatedAddress";
@@ -404,6 +405,8 @@ export default function DashboardPage() {
 
   return (
     <section className="space-y-6">
+      <PullToRefresh onRefresh={fetchJobs} label="Refresh dashboard" />
+
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Dashboard</h1>
         <ExportButton jobs={allJobs} wallet={wallet} />
@@ -523,7 +526,7 @@ export default function DashboardPage() {
             onBatchApprove={handleBatchApprove}
             batchLoading={batchLoading}
             selectedJobIds={selectedJobIds}
-            onToggleSelect={handleToggleSelect}
+            onToggleBulkCancelSelect={handleToggleSelect}
             onSelectAll={handleSelectAllOpen}
             onDeselectAll={handleDeselectAll}
             onBulkCancel={() => setShowBulkConfirm(true)}
@@ -715,7 +718,7 @@ function JobSection({
   onBatchApprove,
   batchLoading,
   selectedJobIds = new Set(),
-  onToggleSelect,
+  onToggleBulkCancelSelect,
   onSelectAll,
   onDeselectAll,
   onBulkCancel,
@@ -738,6 +741,7 @@ function JobSection({
   batchLoading?: boolean;
   selectedJobIds?: Set<number>;
   onToggleSelect?: (id: number) => void;
+  onToggleBulkCancelSelect?: (id: number) => void;
   onSelectAll?: () => void;
   onDeselectAll?: () => void;
   onBulkCancel?: () => void;
@@ -752,6 +756,10 @@ function JobSection({
   const allOpenSelected =
     openClientJobs.length > 0 && openClientJobs.every((j) => selectedJobIds.has(j.id));
 
+  const openClientJobs = role === "client" ? jobs.filter((j) => j.job.status === "Open") : [];
+  const selectionCount = openClientJobs.filter((j) => selectedJobIds.has(j.id)).length;
+  const allOpenSelected = openClientJobs.length > 0 && openClientJobs.every((j) => selectedJobIds.has(j.id));
+
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -765,6 +773,31 @@ function JobSection({
               <span className="text-xs text-slate-400">
                 {selectedJobs?.size ?? 0} of {pendingReviewIds.length} selected
               </span>
+        {role === "client" && hasPendingReview && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-400">
+              {selectedJobs?.size ?? 0} of {pendingReviewIds.length} selected
+            </span>
+            <button
+              type="button"
+              onClick={onBatchApprove}
+              disabled={!selectedJobs || selectedJobs.size === 0 || batchLoading}
+              className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {batchLoading ? "Approving..." : `Approve Selected (${selectedJobs?.size ?? 0})`}
+            </button>
+          </div>
+        )}
+        {/* Bulk cancel controls — client only, at least 1 open job */}
+        {role === "client" && openClientJobs.length > 0 && (
+          <div className="flex items-center gap-2">
+            <button
+              className="text-xs text-slate-500 underline underline-offset-2 hover:text-slate-800"
+              onClick={allOpenSelected ? onDeselectAll : onSelectAll}
+            >
+              {allOpenSelected ? "Deselect all" : "Select all open"}
+            </button>
+            {selectionCount >= 2 && (
               <button
                 type="button"
                 onClick={onBatchApprove}
@@ -803,7 +836,9 @@ function JobSection({
         </div>
       </div>
       {jobs.length === 0 ? (
-        filterActive && allJobs.length > 0 ? (
+        // The filter-empty CTA renders once (client section) instead of
+        // duplicating an identical message/button across both sections.
+        filterActive && allJobs.length > 0 && role === "client" ? (
           <NoResultsState
             title="No jobs match this filter"
             description="Try a different status or clear the filter to show every job in this section."
@@ -847,6 +882,23 @@ function JobSection({
               </li>
             );
           })}
+          {jobs.map(({ id, job }) => (
+            <li key={id}>
+              <JobCard
+                id={id}
+                job={job}
+                wallet={wallet}
+                role={role}
+                isLoading={actionLoading === id}
+                onAction={onAction}
+                onRequestAction={onRequestAction}
+                isSelected={selectedJobs?.has(id) ?? false}
+                onToggleSelect={role === "client" && job.status === "SubmittedForReview" ? onToggleSelect : undefined}
+                isBulkCancelSelected={selectedJobIds.has(id)}
+                onToggleBulkCancelSelect={role === "client" && job.status === "Open" ? onToggleBulkCancelSelect : undefined}
+              />
+            </li>
+          ))}
         </ul>
       )}
     </div>
@@ -864,6 +916,8 @@ function JobCard({
   isSelected = false,
   onToggleSelect,
   selectMode,
+  isBulkCancelSelected = false,
+  onToggleBulkCancelSelect,
 }: {
   id: number;
   job: Job;
@@ -902,6 +956,37 @@ function JobCard({
               className={`h-4 w-4 rounded border-slate-300 cursor-pointer ${
                 selectMode === "approve" ? "text-emerald-600" : "accent-red-600"
               }`}
+  isBulkCancelSelected?: boolean;
+  onToggleBulkCancelSelect?: (id: number) => void;
+}) {
+  const actions = getActions(id, job, wallet, role);
+  const amountXlm = `${toXlm(job.amount)} XLM`;
+  const selectionRing = isSelected
+    ? "ring-2 ring-emerald-400"
+    : isBulkCancelSelected
+      ? "ring-2 ring-red-400"
+      : "";
+
+  return (
+    <article className={`interactive-card h-full p-4 ${selectionRing}`}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2">
+          {onToggleSelect && job.status === "SubmittedForReview" && (
+            <input
+              type="checkbox"
+              checked={isSelected}
+              onChange={() => onToggleSelect(id)}
+              className="h-4 w-4 rounded border-slate-300 text-emerald-600"
+              aria-label={`Select Job #${id} for batch approval`}
+            />
+          )}
+          {onToggleBulkCancelSelect && (
+            <input
+              type="checkbox"
+              aria-label={`Select Job #${id} for bulk cancellation`}
+              checked={isBulkCancelSelected}
+              onChange={() => onToggleBulkCancelSelect(id)}
+              className="h-4 w-4 rounded border-slate-300 accent-red-600 cursor-pointer"
             />
           )}
           <h3 className="font-medium">Job #{id}</h3>

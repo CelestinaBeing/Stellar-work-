@@ -20,8 +20,10 @@ import {
 import {
   type StellarNetwork,
   getPersistedNetwork,
+  getExplicitNetwork,
   getNetworkConfig,
 } from "@/lib/network-config";
+import { classifyError, reportContractTx, reportRpcError } from "@/lib/metrics-client";
 
 function getActiveNetwork(): StellarNetwork {
   if (typeof window !== "undefined") {
@@ -39,8 +41,7 @@ const getRpcUrl = () => getNetworkConfig(getActiveNetwork()).rpcUrl;
 export type { StellarNetwork };
 
 export function getConfiguredNetwork(): StellarNetwork | null {
-  const network = getActiveNetwork();
-  return network;
+  return getExplicitNetwork();
 }
 
 const getNetworkPassphrase = () => getNetworkConfig(getActiveNetwork()).passphrase;
@@ -101,7 +102,40 @@ export async function signTransaction(xdrValue: string): Promise<string> {
 
 const READONLY_SOURCE = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 
+/**
+ * Instrumented entry point: records invocation outcome and latency for the
+ * Prometheus/Grafana dashboards before handing the result back unchanged.
+ */
 export async function callContract(
+  contractId: string,
+  method: string,
+  args: xdr.ScVal[],
+  options?: { readOnly?: boolean; pollTimeout?: number },
+): Promise<TransactionResult> {
+  const network = getActiveNetwork();
+  const startedAt = Date.now();
+
+  try {
+    const result = await invokeContract(contractId, method, args, options);
+    if (!options?.readOnly) {
+      reportContractTx(
+        method,
+        result.status === "ERROR" ? "error" : "success",
+        network,
+        Date.now() - startedAt,
+      );
+    }
+    return result;
+  } catch (error) {
+    reportRpcError(classifyError(error), network);
+    if (!options?.readOnly) {
+      reportContractTx(method, "error", network, Date.now() - startedAt);
+    }
+    throw error;
+  }
+}
+
+async function invokeContract(
   contractId: string,
   method: string,
   args: xdr.ScVal[],
