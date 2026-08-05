@@ -25,6 +25,7 @@ const OnboardingProvider = dynamic(() => import("@/components/OnboardingProvider
 const InstallPrompt = dynamic(() => import("@/components/InstallPrompt"), { ssr: false });
 const ServiceWorkerRegistration = dynamic(() => import("@/components/ServiceWorkerRegistration"), { ssr: false });
 const AnnouncementBanner = dynamic(() => import("@/components/AnnouncementBanner"), { ssr: false });
+const MetricsReporter = dynamic(() => import("@/components/MetricsReporter"), { ssr: false });
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -151,6 +152,7 @@ export default async function RootLayout({
             Skip to main content
           </a>
           <ServiceWorkerRegistration />
+          <MetricsReporter />
           <AnnouncementBanner />
           <OfflineIndicator />
           <Navigation />
