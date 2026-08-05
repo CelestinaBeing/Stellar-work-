@@ -1,5 +1,6 @@
 "use client";
 
+import CancelJobConfirmModal from "@/components/CancelJobConfirmModal";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import InfoTooltip from "@/components/InfoTooltip";
 import { useToast } from "@/components/ToastProvider";
@@ -9,6 +10,8 @@ import RichTextRenderer, {
   isRichText,
   PlainTextRenderer,
 } from "@/components/RichTextRenderer";
+import TruncatedAddress from "@/components/TruncatedAddress";
+import RichTextRenderer, { isRichText, PlainTextRenderer } from "@/components/RichTextRenderer";
 import { useNotifications } from "@/lib/notifications-context";
 import {
   acceptJob,
@@ -90,7 +93,7 @@ function getAutoApprovalCountdown(submittedAtStr: string | undefined) {
 function JobDetailPageContent() {
   const params = useParams<{ id: string }>();
   const id = params.id;
-  const { wallet } = useWallet();
+  const { wallet, connectWallet } = useWallet();
   const { showSuccess, showError } = useToast();
   const { addNotification } = useNotifications();
   const [job, setJob] = useState<Job | null>(null);
@@ -222,6 +225,10 @@ function JobDetailPageContent() {
   );
   const hasPrimaryActions =
     canAccept || canSubmit || canApprove || canCancel || canFreelancerCancel;
+  const canFreelancerCancel = Boolean(isFreelancer && job?.status === "InProgress");
+  const hasPrimaryActions = !wallet
+    ? Boolean(job && ["Open", "InProgress", "SubmittedForReview"].includes(job.status))
+    : canAccept || canSubmit || canApprove || canCancel || canFreelancerCancel;
 
   async function handleAction(
     action: () => Promise<{ hash?: string }>,
@@ -496,6 +503,7 @@ function JobDetailPageContent() {
         aria-atomic="true"
         className="sr-only"
       >
+      <p aria-live="polite" aria-atomic="true" className="sr-only">
         {statusAnnouncement}
       </p>
 
@@ -625,6 +633,11 @@ function JobDetailPageContent() {
             {job.token
               ? `${job.token.slice(0, 8)}...${job.token.slice(-4)}`
               : "N/A"}
+            {job.token ? (
+              <TruncatedAddress address={job.token} className="font-mono text-xs" />
+            ) : (
+              "N/A"
+            )}
           </code>
         </p>
         <div>
@@ -892,7 +905,18 @@ function JobDetailPageContent() {
 
           <div className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 shadow-[0_-6px_24px_rgba(15,23,42,0.08)] backdrop-blur-sm sm:static sm:border-0 sm:bg-transparent sm:px-0 sm:py-0 sm:pb-0 sm:shadow-none sm:backdrop-blur-none">
             <div className="mx-auto flex w-full max-w-4xl flex-wrap gap-2 sm:justify-end">
-              {canAccept && (
+              {!wallet ? (
+                <button
+                  className="min-w-0 flex-1 rounded-md border border-slate-900 bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800 sm:flex-none sm:max-w-48 sm:py-2"
+                  onClick={async () => {
+                    try { await connectWallet(); } catch { /* cancelled */ }
+                  }}
+                >
+                  Connect Wallet
+                </button>
+              ) : (
+                <>
+                  {canAccept && (
                 <button
                   className="min-w-0 flex-1 rounded-md border border-blue-600 bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-500 sm:flex-none sm:max-w-48 sm:py-2"
                   onClick={() => {
@@ -972,21 +996,29 @@ function JobDetailPageContent() {
                   </span>
                 </button>
               )}
+              )}
             </div>
           </div>
         </>
       )}
 
       {/* Confirmation dialogs */}
-      {pendingAction && (
+      {pendingAction === "cancelJob" ? (
+        <CancelJobConfirmModal
+          jobId={id}
+          loading={loading}
+          onClose={() => setPendingAction(null)}
+          onConfirm={() => void executeAction("cancelJob")}
+        />
+      ) : pendingAction !== null ? (
         <ConfirmDialog
-          open={pendingAction !== null}
+          open
           {...DIALOG_CONFIG[pendingAction]}
           loading={loading}
           onConfirm={() => void executeAction(pendingAction)}
           onCancel={() => setPendingAction(null)}
         />
-      )}
+      ) : null}
     </section>
   );
 }

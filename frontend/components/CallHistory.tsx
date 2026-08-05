@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import TruncatedAddress from "@/components/TruncatedAddress";
 import { loadCallHistory, type CallRecord } from "@/lib/calling";
 
 function formatDuration(ms: number): string {
@@ -13,10 +14,6 @@ function formatDuration(ms: number): string {
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
-function shortAddr(addr: string): string {
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
 interface CallHistoryProps {
