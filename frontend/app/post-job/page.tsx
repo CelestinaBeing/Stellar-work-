@@ -13,6 +13,7 @@ import {
   formatCooldown,
   type RateLimitStatus,
 } from "@/lib/rate-limiter";
+import { JobCategorySelect } from "@/components/JobCategorySelect";
 import { StrKey } from "@stellar/stellar-sdk";
 
 const MIN_JOB_AMOUNT_XLM = 0.5;
@@ -99,6 +100,8 @@ export default function PostJobPage() {
     cooldownEndsAt: null,
     isLimited: false,
   });
+  const [category, setCategory] = useState("");
+  const [tags, setTags] = useState<string[]>([]);
 
   // Draft saving state
   const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
@@ -588,6 +591,13 @@ export default function PostJobPage() {
             </p>
           )}
         </label>
+
+        <JobCategorySelect
+          category={category}
+          tags={tags}
+          onCategoryChange={setCategory}
+          onTagsChange={setTags}
+        />
 
         {rateLimit.cooldownEndsAt && (
           <div

@@ -259,6 +259,98 @@ pub enum Error {
 
 #[derive(Clone, Debug)]
 #[contracttype]
+    pub submitted_at: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RetainerStatus {
+    Active,
+    Completed,
+    Cancelled,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Retainer {
+    pub client: Address,
+    pub freelancer: Address,
+    pub amount: i128,
+    pub interval_ledgers: u64,
+    pub max_renewals: u32,
+    pub current_renewal: u32,
+    pub status: RetainerStatus,
+    pub created_at: u64,
+    pub token: Address,
+    pub last_renewed_at: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ChainStatus {
+    Pending,
+    Exported,
+    Imported,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CrossChainJob {
+    pub source_chain: String,
+    pub source_job_id: u64,
+    pub origin_contract: Address,
+    pub freelancer: Address,
+    pub amount: i128,
+    pub status: ChainStatus,
+    pub token: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Milestone {
+    pub id: u32,
+    pub description_hash: Bytes,
+    pub amount: i128,
+    pub is_released: bool,
+}
+
+/// Preference for swapping job payment to a different token upon approval.
+/// When set on a job, `approve_work` will swap the payout from the job's
+/// token to `desired_token` before transferring to the freelancer.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SwapPreference {
+    pub desired_token: Address,
+    /// Maximum slippage in basis points (0–10000).
+    pub max_slippage_bps: u32,
+}
+
+/// Aggregate platform statistics returned by `get_platform_stats` (issue #491).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlatformStats {
+    pub total_jobs_posted: u64,
+    pub total_jobs_completed: u64,
+    pub total_volume: i128,
+    pub total_fees_collected: i128,
+    pub unique_clients: u64,
+    pub unique_freelancers: u64,
+}
+
+/// A reusable job configuration saved by a client (issue #446).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JobTemplate {
+    pub template_id: u64,
+    pub name: soroban_sdk::String,
+    pub description_hash: BytesN<32>,
+    pub amount: i128,
+    pub deadline_duration_ledgers: u64,
+    pub token: Address,
+}
+
+#[contracttype]
+#[derive(Clone)]
 pub enum DataKey {
     JobsCount,
     Job(u64),
@@ -307,6 +399,15 @@ pub enum DataKey {
     UserAttestations(Address),
     JobVisibility(u64),
     InvitedFreelancer(u64, Address),
+    // ── Platform statistics (issue #491) ────────────────────────────────────
+    TotalVolume,
+    UniqueClients,
+    UniqueFreelancers,
+    UniqueClient(Address),
+    UniqueFreelancer(Address),
+    // ── Job templates (issue #446) ───────────────────────────────────────────
+    TemplateCount(Address),
+    Template(Address, u64),
 }
 
 #[contracterror]
@@ -532,6 +633,15 @@ impl EscrowContract {
 
         let token_client = token::Client::new(&env, &token_address);
         token_client.transfer(&client, &env.current_contract_address(), &amount);
+
+        // Track unique clients and cumulative volume for platform stats (#491).
+        if !env.storage().instance().has(&DataKey::UniqueClient(client.clone())) {
+            env.storage().instance().set(&DataKey::UniqueClient(client.clone()), &true);
+            let uc: u64 = env.storage().instance().get(&DataKey::UniqueClients).unwrap_or(0);
+            env.storage().instance().set(&DataKey::UniqueClients, &(uc + 1));
+        }
+        let vol: i128 = env.storage().instance().get(&DataKey::TotalVolume).unwrap_or(0i128);
+        env.storage().instance().set(&DataKey::TotalVolume, &(vol + amount));
 
         let job_id = next_job_id(&e);
         let job_token = token.clone();
@@ -778,6 +888,15 @@ impl EscrowContract {
         env.storage().instance().set(&DataKey::Fees, &fees);
 
         let token = token::Client::new(&env, &job.token);
+        if let Some(freelancer) = &job.freelancer {
+            // Track unique freelancers for platform stats (#491).
+            if !env.storage().instance().has(&DataKey::UniqueFreelancer(freelancer.clone())) {
+                env.storage().instance().set(&DataKey::UniqueFreelancer(freelancer.clone()), &true);
+                let uf: u64 = env.storage().instance().get(&DataKey::UniqueFreelancers).unwrap_or(0);
+                env.storage().instance().set(&DataKey::UniqueFreelancers, &(uf + 1));
+            }
+            token.transfer(&env.current_contract_address(), freelancer, &payout);
+        }
         token.transfer(&env.current_contract_address(), &freelancer, &payout);
 
         job.status = JobStatus::Completed;
@@ -9099,6 +9218,127 @@ mod test {
         run_ops(&ops);
     }
 
+    pub fn get_jobs_batch_visible_to(env: Env, start: u64, limit: u32, viewer: Address) -> Vec<Job> {
+        let count: u64 = env.storage().instance().get(&DataKey::JobCount).unwrap_or(0);
+        let mut jobs = Vec::new(&env);
+        if start == 0 || limit == 0 || start > count {
+            return jobs;
+        }
+        let end = core::cmp::min(count, start.saturating_add(limit as u64).saturating_sub(1));
+        let mut cursor = start;
+        while cursor <= end {
+            if let Ok(job) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                get_job(&env, cursor)
+            })) {
+                let visibility = env.storage()
+                    .persistent()
+                    .get::<DataKey, JobVisibility>(&DataKey::JobVisibility(cursor))
+                    .unwrap_or(JobVisibility::Public);
+                let visible = match visibility {
+                    JobVisibility::Public => true,
+                    JobVisibility::Private => job.client == viewer,
+                    JobVisibility::InviteOnly => {
+                        job.client == viewer
+                            || env.storage().persistent().has(&DataKey::InvitedFreelancer(cursor, viewer.clone()))
+                    }
+                };
+                if visible {
+                    jobs.push_back(job);
+                }
+            }
+            cursor = cursor.saturating_add(1);
+        }
+        jobs
+    }
+
+    // ── Platform statistics (#491) ──────────────────────────────────────────
+
+    pub fn get_platform_stats(env: Env, admin: Address) -> PlatformStats {
+        admin.require_auth();
+        let total_jobs_posted: u64 = env.storage().instance().get(&DataKey::JobCount).unwrap_or(0);
+        let total_jobs_completed: u64 = env.storage().instance().get(&DataKey::CompletedJobsCount).unwrap_or(0);
+        let total_volume: i128 = env.storage().instance().get(&DataKey::TotalVolume).unwrap_or(0);
+        let total_fees_collected: i128 = env
+            .storage()
+            .instance()
+            .get::<_, Fees>(&DataKey::Fees)
+            .map(|f| f.total_collected)
+            .unwrap_or(0);
+        let unique_clients: u64 = env.storage().instance().get(&DataKey::UniqueClients).unwrap_or(0);
+        let unique_freelancers: u64 = env.storage().instance().get(&DataKey::UniqueFreelancers).unwrap_or(0);
+        PlatformStats {
+            total_jobs_posted,
+            total_jobs_completed,
+            total_volume,
+            total_fees_collected,
+            unique_clients,
+            unique_freelancers,
+        }
+    }
+
+    // ── Job templates (#446) ────────────────────────────────────────────────
+
+    pub fn save_template(
+        env: Env,
+        client: Address,
+        name: soroban_sdk::String,
+        description_hash: BytesN<32>,
+        amount: i128,
+        deadline_duration_ledgers: u64,
+        token: Address,
+    ) -> u64 {
+        client.require_auth();
+        let count: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TemplateCount(client.clone()))
+            .unwrap_or(0);
+        let template_id = count + 1;
+        let tpl = JobTemplate {
+            template_id,
+            name,
+            description_hash,
+            amount,
+            deadline_duration_ledgers,
+            token,
+        };
+        env.storage()
+            .instance()
+            .set(&DataKey::Template(client.clone(), template_id), &tpl);
+        env.storage()
+            .instance()
+            .set(&DataKey::TemplateCount(client), &template_id);
+        template_id
+    }
+
+    pub fn get_templates(env: Env, client: Address) -> Vec<JobTemplate> {
+        let count: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TemplateCount(client.clone()))
+            .unwrap_or(0);
+        let mut result = Vec::new(&env);
+        for i in 1..=count {
+            if let Some(tpl) = env
+                .storage()
+                .instance()
+                .get::<_, JobTemplate>(&DataKey::Template(client.clone(), i))
+            {
+                result.push_back(tpl);
+            }
+        }
+        result
+    }
+
+    pub fn delete_template(env: Env, client: Address, template_id: u64) {
+        client.require_auth();
+        let key = DataKey::Template(client, template_id);
+        if !env.storage().instance().has(&key) {
+            panic!("template not found");
+        }
+        env.storage().instance().remove(&key);
+    }
+}
     // ── Issue #412: Referral reward system tests ──────────────────────────────
 
     #[test]
