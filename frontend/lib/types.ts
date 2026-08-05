@@ -40,6 +40,8 @@ export interface Job {
   submitted_at: string;
   title?: string;
   category?: string;
+  /** Unix timestamp the freelancer last submitted work, when the contract exposes it. */
+  submitted_at?: string;
 }
 
 /** A single milestone within a milestone-based job. */
