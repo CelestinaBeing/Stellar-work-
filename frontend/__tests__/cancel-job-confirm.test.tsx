@@ -56,6 +56,8 @@ vi.mock("@/lib/meetings-context", () => ({
     cancelMeeting: vi.fn(),
     completeMeeting: vi.fn(),
     rescheduleProposal: vi.fn(),
+    cancelMeeting: vi.fn(),
+    confirmMeeting: vi.fn(),
     getMeetingsForJob: () => [],
     getUpcomingMeetings: () => [],
     getPastMeetings: () => [],
