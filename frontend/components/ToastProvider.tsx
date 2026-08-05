@@ -11,7 +11,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { CheckCircle2, XCircle } from "lucide-react";
 
 type ToastVariant = "success" | "error";
 
@@ -89,6 +88,38 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
+      {/*
+       * Two separate live regions so screen readers use the correct politeness:
+       * - success → polite (aria-live="polite", role="status")
+       * - error   → assertive (aria-live="assertive", role="alert")
+       * aria-atomic="true" ensures each toast is announced as a complete unit.
+       */}
+      <div className="pointer-events-none fixed top-4 right-4 z-[100] flex w-full max-w-sm flex-col gap-2">
+        {/* Polite region — success toasts */}
+        <div
+          aria-live="polite"
+          aria-atomic="true"
+          aria-relevant="additions"
+          role="status"
+          className="contents"
+        >
+          {successToasts.map((toast) => (
+            <ToastItem key={toast.id} toast={toast} onDismiss={dismiss} />
+          ))}
+        </div>
+
+        {/* Assertive region — error toasts */}
+        <div
+          aria-live="assertive"
+          aria-atomic="true"
+          aria-relevant="additions"
+          role="alert"
+          className="contents"
+        >
+          {errorToasts.map((toast) => (
+            <ToastItem key={toast.id} toast={toast} onDismiss={dismiss} />
+          ))}
+        </div>
       <div
         aria-live="polite"
         aria-relevant="additions"
