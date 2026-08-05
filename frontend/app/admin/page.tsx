@@ -109,9 +109,16 @@ export default function AdminPage() {
       const actualAdmin = envAdmin;
 
       const count = await adminGetJobCount(actualAdmin);
-      const jobsList = await adminGetAllJobs(actualAdmin, 0, count);
-      const fetched = jobsList.map((job, idx) => ({ id: idx + 1, job }));
-      setJobs(fetched);
+      setJobs([]);
+      setLoading(true);
+      try {
+        const limit = 50;
+        const list = await adminGetAllJobs(actualAdmin, 0, Math.max(1, count > limit ? limit : count));
+        const fetched = list.map((job, idx) => ({ id: idx + 1, job }));
+        setJobs(fetched);
+      } catch {
+        setJobs([]);
+      }
 
       const whitelistMode = await isWhitelistModeEnabled();
       setIsWhitelistMode(whitelistMode);

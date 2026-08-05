@@ -38,6 +38,7 @@ import {
 } from "@/lib/recent-searches";
 import { getExplorerTxUrl } from "@/lib/stellar";
 import { getRecentJobIds, getJobWindowBounds } from "@/lib/recent-ids";
+import Pagination from "@/components/Pagination";
 import type { Job, JobStatus } from "@/lib/types";
 import { useWallet } from "@/lib/wallet-context";
 import Link from "next/link";
@@ -174,6 +175,8 @@ export default function HomePage() {
     sessionStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
   }, [viewMode]);
 
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(totalJobs / pageSize)), [pageSize, totalJobs]);
+
   useEffect(() => {
     try {
       const stored = localStorage.getItem(BOOKMARK_STORAGE_KEY);
@@ -261,7 +264,15 @@ export default function HomePage() {
             const descMap: Record<string, string> = {};
             for (const { job } of cached.jobs) {
               const stored = localStorage.getItem(`job-desc:${job.description_hash}`);
-              if (stored) descMap[job.description_hash] = stored;
+              if (stored) {
+                // Verify integrity where possible; best-effort synchronous fallthrough
+                try {
+                  // We'll verify asynchronously below when populating from fetched results
+                  descMap[job.description_hash] = stored;
+                } catch {
+                  // ignore
+                }
+              }
             }
             setDescriptions(descMap);
             setJobs(cached.jobs);
@@ -274,9 +285,12 @@ export default function HomePage() {
         }
       }
 
+      // Calculate window for current page only to avoid fetching all jobs.
+      const bounds = getJobWindowBounds(count, page, pageSize);
       const idsToFetch: string[] = [];
-      for (let id = 1; id <= count; id += 1) {
-        idsToFetch.push(String(id));
+      if (bounds) {
+        const ids = getRecentJobIds(bounds.startId, bounds.endId, sortOrder === "newest" ? "newest" : "oldest");
+        for (const id of ids) idsToFetch.push(id);
       }
 
       const results = await Promise.all(
@@ -307,15 +321,34 @@ export default function HomePage() {
         const hash = job.description_hash;
         const stored = localStorage.getItem(`job-desc:${hash}`);
         if (stored) {
-          descMap[hash] = stored;
-          continue;
+          try {
+            // verify integrity before using stored value
+            // import verify lazily to avoid SSR issues
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { verifyHtmlMatchesHash } = await import("@/lib/crypto");
+            // If verification fails, fall back to attempting IPFS fetch
+            if (await verifyHtmlMatchesHash(stored, hash)) {
+              descMap[hash] = stored;
+              continue;
+            }
+          } catch {
+            // proceed to attempt IPFS fetch
+          }
         }
         try {
           const cid = await getDescriptionCid(hash);
           if (cid) {
             const text = await fetchFromIpfs(cid);
-            descMap[hash] = text;
-            localStorage.setItem(`job-desc:${hash}`, text);
+            // verify fetched text
+            try {
+              const { verifyHtmlMatchesHash } = await import("@/lib/crypto");
+              if (await verifyHtmlMatchesHash(text, hash)) {
+                descMap[hash] = text;
+                localStorage.setItem(`job-desc:${hash}`, text);
+              }
+            } catch {
+              // verification failed or crypto helper not available, skip storing
+            }
           }
         } catch {
           // IPFS fetch failed, description will show fallback text
@@ -834,6 +867,16 @@ export default function HomePage() {
             </button>
           </div>
         </fieldset>
+
+        <div className="mt-4">
+          <Pagination
+            page={page}
+            pageSize={pageSize}
+            total={totalJobs}
+            onPageChange={(p) => setPage(p)}
+            onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+          />
+        </div>
 
         <fieldset className="space-y-3 rounded-md border border-slate-200 p-3">
           <legend className="px-1 text-sm font-medium text-slate-700">
