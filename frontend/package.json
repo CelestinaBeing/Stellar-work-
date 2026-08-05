@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "analyze": "ANALYZE=true npm run build",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -27,6 +28,7 @@
     "@tiptap/react": "3.27.1",
     "@tiptap/starter-kit": "3.27.1",
     "@types/dompurify": "3.0.5",
+    "@use-gesture/react": "^10.3.1",
     "@walletconnect/web3wallet": "^1.11.0",
     "dompurify": "3.4.11",
     "lucide-react": "^1.28.0",
@@ -37,6 +39,7 @@
   },
   "devDependencies": {
     "@chromatic-com/storybook": "^5.2.1",
+    "@next/bundle-analyzer": "16.2.3",
     "@playwright/test": "^1.59.1",
     "@storybook/addon-a11y": "^10.4.6",
     "@storybook/addon-vitest": "^10.4.6",
