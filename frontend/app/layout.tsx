@@ -20,6 +20,14 @@ import OfflineIndicator from "@/components/OfflineIndicator";
 import DeferredClientFeatures from "@/components/DeferredClientFeatures";
 import "./globals.css";
 
+const CommandPalette = dynamic(() => import("@/components/CommandPalette"), { ssr: false });
+const ShortcutCheatSheet = dynamic(() => import("@/components/ShortcutCheatSheet"), { ssr: false });
+const OnboardingProvider = dynamic(() => import("@/components/OnboardingProvider"), { ssr: false });
+const InstallPrompt = dynamic(() => import("@/components/InstallPrompt"), { ssr: false });
+const ServiceWorkerRegistration = dynamic(() => import("@/components/ServiceWorkerRegistration"), { ssr: false });
+const AnnouncementBanner = dynamic(() => import("@/components/AnnouncementBanner"), { ssr: false });
+const MetricsReporter = dynamic(() => import("@/components/MetricsReporter"), { ssr: false });
+
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -146,6 +154,9 @@ export default async function RootLayout({
             Skip to main content
           </a>
           <DeferredClientFeatures />
+          <ServiceWorkerRegistration />
+          <MetricsReporter />
+          <AnnouncementBanner />
           <OfflineIndicator />
           <Navigation />
           <ScrollRestorer />

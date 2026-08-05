@@ -4,6 +4,7 @@ import ErrorBanner from "@/components/ErrorBanner";
 import EmptyState from "@/components/EmptyState";
 import InfoTooltip from "@/components/InfoTooltip";
 import NoResultsState from "@/components/NoResultsState";
+import PullToRefresh from "@/components/PullToRefresh";
 import JobCardSkeleton from "@/components/JobCardSkeleton";
 import SectionCard from "@/components/SectionCard";
 import ComparisonBar from "@/components/ComparisonBar";
@@ -546,6 +547,8 @@ export default function HomePage() {
 
   return (
     <section className="space-y-6">
+      <PullToRefresh onRefresh={refresh} label="Refresh job listings" />
+
       {/* Hero Section */}
       <div className="rounded-lg border border-slate-200 bg-white p-6 md:p-8">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">

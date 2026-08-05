@@ -18,6 +18,7 @@ import ExportButton from "@/components/ExportButton";
 import InfoTooltip from "@/components/InfoTooltip";
 import JobCardSkeleton from "@/components/JobCardSkeleton";
 import NoResultsState from "@/components/NoResultsState";
+import PullToRefresh from "@/components/PullToRefresh";
 import SectionCard from "@/components/SectionCard";
 import StatusPill from "@/components/StatusPill";
 import { useToast } from "@/components/ToastProvider";
@@ -402,6 +403,8 @@ export default function DashboardPage() {
 
   return (
     <section className="space-y-6">
+      <PullToRefresh onRefresh={fetchJobs} label="Refresh dashboard" />
+
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Dashboard</h1>
         <ExportButton jobs={allJobs} wallet={wallet} />
