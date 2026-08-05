@@ -23,6 +23,7 @@ import {
   getExplicitNetwork,
   getNetworkConfig,
 } from "@/lib/network-config";
+import { recordRecentContractInteraction } from "@/lib/recent-contract-interactions";
 import { classifyError, reportContractTx, reportRpcError } from "@/lib/metrics-client";
 
 function getActiveNetwork(): StellarNetwork {
@@ -193,7 +194,24 @@ async function invokeContract(
   const signedTx = TransactionBuilder.fromXDR(signedXdr, networkPassphrase);
   const sent = await server.sendTransaction(signedTx);
 
+  if (sent.hash) {
+    recordRecentContractInteraction({
+      hash: sent.hash,
+      status: "PENDING",
+      timestamp: Date.now(),
+      method,
+    });
+  }
+
   if (sent.status === "ERROR") {
+    if (sent.hash) {
+      recordRecentContractInteraction({
+        hash: sent.hash,
+        status: "ERROR",
+        timestamp: Date.now(),
+        method,
+      });
+    }
     throw new Error(sent.errorResult?.toXDR().toString() ?? "Contract invocation failed.");
   }
 
@@ -207,10 +225,22 @@ async function invokeContract(
       const status = await server.getTransaction(sent.hash);
 
       if (status.status === rpc.Api.GetTransactionStatus.SUCCESS) {
+        recordRecentContractInteraction({
+          hash: sent.hash,
+          status: "SUCCESS",
+          timestamp: Date.now(),
+          method,
+        });
         return { status: "SUCCESS", hash: sent.hash };
       }
 
       if (status.status === rpc.Api.GetTransactionStatus.FAILED) {
+        recordRecentContractInteraction({
+          hash: sent.hash,
+          status: "ERROR",
+          timestamp: Date.now(),
+          method,
+        });
         return {
           status: "ERROR",
           hash: sent.hash,
@@ -222,6 +252,15 @@ async function invokeContract(
     throw new Error(
       `Transaction timed out after ${pollTimeout}ms. Hash: ${sent.hash}`,
     );
+  }
+
+  if (sent.hash) {
+    recordRecentContractInteraction({
+      hash: sent.hash,
+      status: "SUCCESS",
+      timestamp: Date.now(),
+      method,
+    });
   }
 
   return { status: "SUCCESS", hash: sent.hash };
