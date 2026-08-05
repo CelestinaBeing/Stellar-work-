@@ -14,6 +14,7 @@ import { useWallet } from "@/lib/wallet-context";
 import { useMessaging } from "@/lib/messaging-context";
 import CallButton from "@/components/CallButton";
 import CallHistory from "@/components/CallHistory";
+import TruncatedAddress from "@/components/TruncatedAddress";
 import {
   loadThread,
   sendMessage,
@@ -422,9 +423,12 @@ export default function ConversationPage() {
           <Link
             href={`/profile/${peerAddress}`}
             className="block truncate font-mono text-sm font-semibold text-slate-900 hover:underline"
-            title={peerAddress}
           >
-            {shortAddr(peerAddress)}
+            <TruncatedAddress
+              address={peerAddress}
+              className="font-mono text-sm font-semibold text-slate-900"
+              focusable={false}
+            />
           </Link>
           <p className="truncate text-[10px] text-slate-400">{peerAddress}</p>
         </div>

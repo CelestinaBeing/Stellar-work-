@@ -6,7 +6,9 @@ import {
   useEffect,
   useCallback,
 } from "react";
+import TruncatedAddress from "@/components/TruncatedAddress";
 import { useWallet } from "@/lib/wallet-context";
+import { truncateAddress } from "@/lib/stellar";
 
 /**
  * WalletMenu — desktop nav dropdown shown when a wallet is connected.
@@ -126,7 +128,7 @@ export default function WalletMenu() {
     );
   }
 
-  const shortAddress = `${wallet.slice(0, 6)}…${wallet.slice(-4)}`;
+  const shortAddress = truncateAddress(wallet);
 
   return (
     <div className="relative">
@@ -148,7 +150,9 @@ export default function WalletMenu() {
           className="h-2 w-2 rounded-full bg-emerald-500 shrink-0"
           aria-hidden="true"
         />
-        <span className="font-mono text-xs">{shortAddress}</span>
+        <span className="font-mono text-xs">
+          <TruncatedAddress address={wallet} className="font-mono text-xs" focusable={false} />
+        </span>
         {/* Chevron */}
         <svg
           className={`h-3.5 w-3.5 text-slate-400 transition-transform duration-150 ${open ? "rotate-180" : ""}`}
