@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useWallet } from "@/lib/wallet-context";
 import { useMessaging } from "@/lib/messaging-context";
+import PullToRefresh from "@/components/PullToRefresh";
 import {
   loadConversations,
   deleteConversation,
@@ -157,6 +158,11 @@ export default function MessagesPage() {
     load();
   }, [load]);
 
+  const handleRefresh = useCallback(() => {
+    load();
+    refreshUnread();
+  }, [load, refreshUnread]);
+
   function handleDelete(peerAddress: string) {
     if (!wallet) return;
     if (!confirm(`Delete conversation with ${shortAddr(peerAddress)}? This cannot be undone.`)) return;
@@ -196,6 +202,8 @@ export default function MessagesPage() {
 
   return (
     <section className="mx-auto max-w-2xl space-y-5">
+      <PullToRefresh onRefresh={handleRefresh} label="Refresh conversations" />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
