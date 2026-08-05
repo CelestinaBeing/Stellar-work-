@@ -220,6 +220,29 @@ pub enum DataKey {
     UserAttestations(Address),
     JobVisibility(u64),
     InvitedFreelancer(u64, Address),
+    ReentrancyLock,
+}
+
+fn enter_reentrancy_guard(env: &Env) {
+    let locked: bool = env.storage().instance().get(&DataKey::ReentrancyLock).unwrap_or(false);
+    if locked { panic!("reentrant call"); }
+    env.storage().instance().set(&DataKey::ReentrancyLock, &true);
+}
+
+fn exit_reentrancy_guard(env: &Env) {
+    env.storage().instance().set(&DataKey::ReentrancyLock, &false);
+}
+
+fn require_admin(env: &Env) -> Address {
+    let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap_or_else(|| panic!("not initialized"));
+    CompletedJobsCount,
+    FeeBps,
+    DescriptionPayloadMaxBytes,
+    MaxActiveJobsPerClient,
+    PendingUpgradeWasmHash,
+    PendingUpgradeDeadline,
+    DescriptionCidMapping(BytesN<32>),
+    SwapPreference(u64),
     /// Issue #535: collaborative job share list keyed by job id.
     CollaborativeShares(u64),
 }
@@ -481,6 +504,21 @@ impl EscrowContract {
         let token_client = token::Client::new(&e, &token);
         token_client.transfer(&client, &e.current_contract_address(), &amount);
 
+    pub fn approve_work(env: Env, client: Address, job_id: u64) {
+        client.require_auth();
+        let mut job = get_job(&env, job_id);
+        if job.client != client { panic!("not authorized"); }
+        if job.status != JobStatus::SubmittedForReview { panic!("job not submitted"); }
+        enter_reentrancy_guard(&env);
+        let fee = job.amount * PLATFORM_FEE_BPS as i128 / 10000;
+        let payout = job.amount - fee;
+
+        let sla_penalty: i128 = env.storage().persistent().get(&DataKey::SLABreachPenalty(job_id)).unwrap_or(0);
+        let payout = if sla_penalty > 0 {
+            let penalty = sla_penalty.min(payout);
+            job.amount - fee - penalty
+        } else {
+            payout
         let job_id = next_job_id(&e);
         let job = Job {
             client: client.clone(),
@@ -496,6 +534,34 @@ impl EscrowContract {
         set_job(&e, job_id, &job);
         set_collaborative_shares(&e, job_id, &stored);
 
+        let mut fees: Fees = env.storage().instance().get(&DataKey::Fees).unwrap_or(Fees { total_collected: 0 });
+        fees.total_collected += fee;
+        env.storage().instance().set(&DataKey::Fees, &fees);
+
+        let token = token::Client::new(&env, &job.token);
+        if let Some(freelancer) = &job.freelancer {
+            token.transfer(&env.current_contract_address(), freelancer, &payout);
+        }
+        exit_reentrancy_guard(&env);
+        job.status = JobStatus::Completed;
+        put_job(&env, job_id, &job);
+
+        let mut completed: u64 = env.storage().instance().get(&DataKey::CompletedJobsCount).unwrap_or(0);
+        completed += 1;
+        env.storage().instance().set(&DataKey::CompletedJobsCount, &completed);
+    }
+
+    pub fn cancel_job(env: Env, client: Address, job_id: u64) {
+        client.require_auth();
+        let mut job = get_job(&env, job_id);
+        if job.client != client { panic!("not authorized"); }
+        if job.status != JobStatus::Open { panic!("job not open"); }
+        enter_reentrancy_guard(&env);
+        let token = token::Client::new(&env, &job.token);
+        token.transfer(&env.current_contract_address(), &client, &job.amount);
+        exit_reentrancy_guard(&env);
+        job.status = JobStatus::Cancelled;
+        put_job(&env, job_id, &job);
         let mut all_ids: Vec<u64> = e
             .storage()
             .persistent()
@@ -544,6 +610,19 @@ impl EscrowContract {
             panic_with_error!(&e, Error::DeadlinePassed);
         }
 
+    pub fn enforce_deadline(env: Env, caller: Address, job_id: u64) {
+        caller.require_auth();
+        let mut job = get_job(&env, job_id);
+        let ledger = current_ledger(&env);
+        if ledger <= job.deadline { panic!("deadline not passed"); }
+        if job.status != JobStatus::InProgress && job.status != JobStatus::Open { panic!("job not active"); }
+        enter_reentrancy_guard(&env);
+        let token = token::Client::new(&env, &job.token);
+        token.transfer(&env.current_contract_address(), &job.client, &job.amount);
+        exit_reentrancy_guard(&env);
+        job.status = JobStatus::Cancelled;
+        put_job(&env, job_id, &job);
+    }
         let mut shares = get_collaborative_shares_or_panic(&e, job_id);
         let mut found = false;
         let mut all_accepted = true;
@@ -598,6 +677,30 @@ impl EscrowContract {
         );
     }
 
+    pub fn resolve_dispute(env: Env, admin: Address, job_id: u64, winner: Address) {
+        admin.require_auth();
+        require_admin(&env);
+        let mut job = get_job(&env, job_id);
+        if job.status != JobStatus::Disputed { panic!("job not disputed"); }
+        enter_reentrancy_guard(&env);
+        let fee = job.amount * PLATFORM_FEE_BPS as i128 / 10000;
+        let payout = job.amount - fee;
+        let mut fees: Fees = env.storage().instance().get(&DataKey::Fees).unwrap_or(Fees { total_collected: 0 });
+        fees.total_collected += fee;
+        env.storage().instance().set(&DataKey::Fees, &fees);
+
+        let token = token::Client::new(&env, &job.token);
+        token.transfer(&env.current_contract_address(), &winner, &payout);
+        exit_reentrancy_guard(&env);
+        job.status = JobStatus::Completed;
+        put_job(&env, job_id, &job);
+        desc_hash: Bytes,
+        description_payload_len: u32,
+        deadline: u64,
+        token: Address,
+    ) -> Result<u64, Error> {
+        client.require_auth();
+        check_whitelist(&env, &client)?;
     /// Issue #535: each freelancer submits independently.
     /// Job moves to SubmittedForReview only after every share is Submitted.
     pub fn submit_collaborative_work(e: Env, freelancer: Address, job_id: u64) {
@@ -1300,6 +1403,17 @@ impl EscrowContract {
         );
     }
 
+    pub fn withdraw_fees(env: Env, admin: Address, amount: i128, token_addr: Address) {
+        admin.require_auth();
+        require_admin(&env);
+        let mut fees: Fees = env.storage().instance().get(&DataKey::Fees).unwrap_or(Fees { total_collected: 0 });
+        if amount > fees.total_collected { panic!("insufficient fees"); }
+        enter_reentrancy_guard(&env);
+        fees.total_collected -= amount;
+        env.storage().instance().set(&DataKey::Fees, &fees);
+        let token = token::Client::new(&env, &token_addr);
+        token.transfer(&env.current_contract_address(), &admin, &amount);
+        exit_reentrancy_guard(&env);
     /// Issue #456 — Returns whether `forwarder` is on the trusted-forwarder whitelist.
     pub fn is_trusted_forwarder(e: Env, forwarder: Address) -> bool {
         e.storage()
