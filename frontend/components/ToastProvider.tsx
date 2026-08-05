@@ -15,7 +15,7 @@ import { CheckCircle2, Loader2, XCircle } from "lucide-react";
 
 type ToastVariant = "success" | "error" | "pending";
 
-type ToastRecord = {
+type ToastItem = {
   id: string;
   message: string;
   variant: ToastVariant;
@@ -32,7 +32,7 @@ const ToastContext = createContext<ToastContextValue | null>(null);
 const AUTO_DISMISS_MS = 5000;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
-  const [toasts, setToasts] = useState<ToastRecord[]>([]);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const idPrefix = useId();
 
