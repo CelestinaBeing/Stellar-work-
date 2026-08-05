@@ -515,6 +515,12 @@ impl EscrowContract {
         get_job(&env, job_id)
     }
 
+    }
+
+    pub fn get_job(env: Env, job_id: u64) -> Job {
+        get_job(&env, job_id)
+    }
+
     pub fn get_job_count(env: Env) -> u64 {
         env.storage().instance().get(&DataKey::JobCount).unwrap_or(0)
     }
@@ -823,6 +829,20 @@ impl EscrowContract {
 
         count
     }
+
+    pub fn approve_milestone(env: Env, client: Address, job_id: u64, milestone_id: u32) {
+        client.require_auth();
+        let job = get_job(&env, job_id);
+        if job.client != client { panic!("not authorized"); }
+        if job.status != JobStatus::InProgress && job.status != JobStatus::SubmittedForReview {
+            panic!("job not active");
+        }
+        let mut ms: Milestone = env.storage().persistent()
+            .get(&DataKey::Milestone(job_id, milestone_id))
+            .unwrap_or_else(|| panic!("milestone not found"));
+        if ms.is_released { panic!("already released"); }
+        ms.is_released = true;
+        env.storage().persistent().set(&DataKey::Milestone(job_id, milestone_id), &ms);
 
     pub fn approve_milestone(env: Env, client: Address, job_id: u64, milestone_id: u32) {
         client.require_auth();

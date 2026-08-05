@@ -517,6 +517,41 @@ fn test_get_client_jobs_returns_correct_ids() {
     assert_eq!(client_jobs.len(), 2);
     assert_eq!(client_jobs.get(0).unwrap(), id1);
     assert_eq!(client_jobs.get(1).unwrap(), id2);
+fn test_discount_tiers_and_high_volume_fee() {
+    let env = Env::default();
+    let (admin, client, freelancer, _token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+
+    // 1. Initial effective fee without completed jobs or configured tiers (e.g. 250 bps = 2.5%)
+    let initial_fee = escrow.calculate_effective_fee_bps(&freelancer);
+    assert_eq!(initial_fee, 250);
+
+    // 2. Admin configures discount tiers (e.g. 5 jobs completed = 50 bps discount)
+    let tiers = vec![
+        &env,
+        DiscountTier {
+            min_completed_jobs: 5,
+            discount_bps: 50,
+        },
+        DiscountTier {
+            min_completed_jobs: 10,
+            discount_bps: 100,
+        },
+    ];
+    escrow.set_discount_tiers(&admin, &tiers);
+
+    // 3. User initial completed job count is zero
+    assert_eq!(escrow.get_user_completed_jobs(&freelancer), 0);
+
+    // 4. Verify effective fee drops when completed jobs threshold is reached (250 - 50 = 200 bps = 2.0%)
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::UserCompletedJobs(freelancer.clone()), &5u32);
+    });
+
+    let discounted_fee = escrow.calculate_effective_fee_bps(&freelancer);
+    assert_eq!(discounted_fee, 200);
 }
 
 #[test]
