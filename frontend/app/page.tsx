@@ -53,7 +53,42 @@ const JOBS_CACHE_KEY = "stellarwork:jobs-cache";
 const JOBS_CACHE_TTL_MS = 30_000;
 
 type JobsViewMode = "grid" | "list";
-type SortOrder = "newest" | "oldest" | "highest_amount";
+type SortOrder = "newest" | "oldest" | "highest_amount" | "deadline_asc";
+
+function compareJobs(sortOrder: SortOrder) {
+  return (a: { id: number; job: Job }, b: { id: number; job: Job }): number => {
+    switch (sortOrder) {
+      case "newest": {
+        const aCreated = Number(a.job.created_at) || 0;
+        const bCreated = Number(b.job.created_at) || 0;
+        // Jobs without a creation timestamp sort last.
+        if (aCreated === 0 && bCreated === 0) return a.id - b.id;
+        if (aCreated === 0) return 1;
+        if (bCreated === 0) return -1;
+        return bCreated - aCreated || a.id - b.id;
+      }
+      case "oldest": {
+        const aCreated = Number(a.job.created_at) || 0;
+        const bCreated = Number(b.job.created_at) || 0;
+        return aCreated - bCreated || a.id - b.id;
+      }
+      case "highest_amount": {
+        const diff = BigInt(b.job.amount) - BigInt(a.job.amount);
+        return diff > 0n ? 1 : diff < 0n ? -1 : 0;
+      }
+      case "deadline_asc": {
+        const aDeadline = BigInt(a.job.deadline);
+        const bDeadline = BigInt(b.job.deadline);
+        // Jobs without a deadline sort last.
+        if (aDeadline === 0n && bDeadline === 0n) return a.id - b.id;
+        if (aDeadline === 0n) return 1;
+        if (bDeadline === 0n) return -1;
+        const diff = aDeadline - bDeadline;
+        return diff > 0n ? 1 : diff < 0n ? -1 : 0;
+      }
+    }
+  };
+}
 
 function readViewMode(): JobsViewMode {
   if (typeof window === "undefined") return "grid";
@@ -82,10 +117,16 @@ export default function HomePage() {
     return [10, 20, 50].includes(n) ? n : 10;
   });
   const [totalJobs, setTotalJobs] = useState(0);
-  const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "highest_amount">(() => {
+  const [sortOrder, setSortOrder] = useState<SortOrder>(() => {
     if (typeof window === "undefined") return "newest";
     const s = new URLSearchParams(window.location.search).get("sort");
-    return s === "oldest" ? "oldest" : s === "highest_amount" ? "highest_amount" : "newest";
+    return s === "oldest"
+      ? "oldest"
+      : s === "highest_amount"
+        ? "highest_amount"
+        : s === "deadline_asc"
+          ? "deadline_asc"
+          : "newest";
   });
   const [statusFilter, setStatusFilter] = useState<JobStatus | "all">(() => {
     if (typeof window === "undefined") return "Open";
@@ -309,12 +350,7 @@ export default function HomePage() {
           item !== null,
       );
 
-      if (sortOrder === "highest_amount") {
-        fetched.sort((a, b) => {
-          const diff = BigInt(b.job.amount) - BigInt(a.job.amount);
-          return diff > 0n ? 1 : diff < 0n ? -1 : 0;
-        });
-      }
+      fetched.sort(compareJobs(sortOrder));
 
       const descMap: Record<string, string> = {};
       for (const { job } of fetched) {
@@ -887,14 +923,14 @@ export default function HomePage() {
               <label htmlFor="jobs-sort-order">Sort:</label>
               <InfoTooltip
                 label="Sort and filter jobs help"
-                content="Newest first surfaces recent jobs at the top. Favorites only filters to bookmarked jobs in this browser."
+                content="Newest first surfaces recent jobs at the top. Deadline ascending lists jobs with the closest deadline first. Favorites only filters to bookmarked jobs in this browser."
               />
             </div>
             <select
               id="jobs-sort-order"
               value={sortOrder}
               onChange={(event) => {
-                setSortOrder(event.target.value as "newest" | "oldest" | "highest_amount");
+                setSortOrder(event.target.value as SortOrder);
                 setPage(1);
               }}
               className="rounded-md border border-slate-300 bg-white px-2 py-1"
@@ -903,6 +939,7 @@ export default function HomePage() {
               <option value="newest">Newest first</option>
               <option value="oldest">Oldest first</option>
               <option value="highest_amount">Highest amount</option>
+              <option value="deadline_asc">Deadline ascending</option>
             </select>
             <label className="inline-flex items-center gap-2">
               <input
