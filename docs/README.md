@@ -29,6 +29,7 @@ Index of project documentation. Start with the [root README](../README.md) for s
 |----------|-------------|
 | [DEPLOYMENT.md](./DEPLOYMENT.md) | Full production deployment guide: contract, frontend, DNS, SSL, and post-deploy verification |
 | [DEPLOY.md](./DEPLOY.md) | Vercel deployment setup, preview deployments, secrets, and environment variables |
+| [FRONTEND_DEPLOYMENT.md](./FRONTEND_DEPLOYMENT.md) | Frontend hosting guide: Vercel, Netlify, Docker, and production env configuration |
 | [environments.md](./environments.md) | Environment variables and target networks |
 | [testnet-deployment-guide.md](./testnet-deployment-guide.md) | Deploy escrow to Stellar testnet |
 
