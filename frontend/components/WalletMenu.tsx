@@ -8,6 +8,8 @@ import {
 } from "react";
 import TruncatedAddress from "@/components/TruncatedAddress";
 import { useWallet } from "@/lib/wallet-context";
+import ConfirmDialog from "@/components/ConfirmDialog";
+import { CONFIRM_KEYS } from "@/lib/confirm-prefs";
 import { truncateAddress } from "@/lib/stellar";
 
 /**
@@ -23,6 +25,7 @@ export default function WalletMenu() {
   const { wallet, connectWallet, disconnectWallet, switchAccount, isSwitching } = useWallet();
   const [open, setOpen] = useState(false);
   const [confirmSwitch, setConfirmSwitch] = useState(false);
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [connecting, setConnecting] = useState(false);
 
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -85,11 +88,20 @@ export default function WalletMenu() {
     }
   }, []);
 
-  const handleDisconnect = useCallback(() => {
+  const handleDisconnectRequest = useCallback(() => {
+    setConfirmDisconnect(true);
+  }, []);
+
+  const handleDisconnectConfirm = useCallback(() => {
+    setConfirmDisconnect(false);
     disconnectWallet();
     setOpen(false);
     setConfirmSwitch(false);
   }, [disconnectWallet]);
+
+  const handleDisconnectCancel = useCallback(() => {
+    setConfirmDisconnect(false);
+  }, []);
 
   const handleSwitchRequest = useCallback(() => {
     setConfirmSwitch(true);
@@ -238,7 +250,7 @@ export default function WalletMenu() {
                 <button
                   role="menuitem"
                   type="button"
-                  onClick={handleDisconnect}
+                  onClick={handleDisconnectRequest}
                   className="flex w-full items-center gap-3 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 focus-visible:bg-red-50 focus:outline-none"
                 >
                   {/* Disconnect icon */}
@@ -310,6 +322,21 @@ export default function WalletMenu() {
             </div>
           )}
         </div>
+      )}
+
+      {confirmDisconnect && (
+        <ConfirmDialog
+          open={true}
+          title="Disconnect wallet?"
+          description="Disconnecting removes this wallet from the app. Job actions will be hidden until you reconnect."
+          consequences={["Bookmarks and preferences saved in this browser are kept.", "You can reconnect at any time with the Connect Wallet button."]}
+          confirmLabel="Yes, disconnect"
+          cancelLabel="Cancel"
+          variant="danger"
+          suppressKey={CONFIRM_KEYS.disconnectWallet}
+          onConfirm={handleDisconnectConfirm}
+          onCancel={handleDisconnectCancel}
+        />
       )}
     </div>
   );

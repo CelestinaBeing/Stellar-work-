@@ -32,7 +32,7 @@ import type { Job, JobStatus, NotificationEvent } from "@/lib/types";
 import { useEffect, useState, useCallback, useRef, type KeyboardEvent } from "react";
 
 type PendingDashAction = {
-  type: "cancelJob" | "approveWork" | "submitWork" | "freelancerCancelJob";
+  type: "cancelJob" | "approveWork" | "submitWork" | "freelancerCancelJob" | "enforceDeadline";
   jobId: number;
   amountXlm: string;
 };
@@ -258,6 +258,12 @@ export default function DashboardPage() {
         jobId,
         undefined
       );
+    } else if (type === "enforceDeadline") {
+      await handleAction(
+        () => enforceDeadline(wallet, String(jobId)),
+        jobId,
+        undefined
+      );
     }
   };
 
@@ -272,6 +278,7 @@ export default function DashboardPage() {
       approveWork: CONFIRM_KEYS.approveWork,
       submitWork: CONFIRM_KEYS.submitWork,
       freelancerCancelJob: CONFIRM_KEYS.freelancerCancelJob,
+      enforceDeadline: CONFIRM_KEYS.enforceDeadline,
     };
     if (isConfirmSuppressed(keyMap[type])) {
       // Execute directly without dialog
@@ -302,6 +309,12 @@ export default function DashboardPage() {
         } else if (type === "freelancerCancelJob") {
           await handleAction(
             () => freelancerCancelJob(wallet, String(jobId)),
+            jobId,
+            undefined
+          );
+        } else if (type === "enforceDeadline") {
+          await handleAction(
+            () => enforceDeadline(wallet, String(jobId)),
             jobId,
             undefined
           );
@@ -529,6 +542,7 @@ export default function DashboardPage() {
             onBatchApprove={handleBatchApprove}
             batchLoading={batchLoading}
             selectedJobIds={selectedJobIds}
+            onToggleSelectBulk={handleToggleSelect}
             onToggleBulkCancelSelect={handleToggleSelect}
             onSelectAll={handleSelectAllOpen}
             onDeselectAll={handleDeselectAll}
@@ -688,6 +702,14 @@ export default function DashboardPage() {
             variant: "danger" as const,
             suppressKey: CONFIRM_KEYS.freelancerCancelJob,
           },
+          enforceDeadline: {
+            title: "Enforce the deadline?",
+            description: "Enforcing finalizes the job at its stated deadline and settles the escrowed amount according to the contract terms. This action cannot be undone.",
+            consequences: ["The job is closed against its deadline.", "The escrowed funds are settled per the contract terms."],
+            confirmLabel: "Yes, enforce deadline",
+            variant: "danger" as const,
+            suppressKey: CONFIRM_KEYS.enforceDeadline,
+          },
         };
         const cfg = configs[type];
         return (
@@ -721,6 +743,7 @@ function JobSection({
   onBatchApprove,
   batchLoading,
   selectedJobIds = new Set(),
+  onToggleSelectBulk,
   onToggleBulkCancelSelect,
   onSelectAll,
   onDeselectAll,
@@ -743,6 +766,7 @@ function JobSection({
   onBatchApprove?: () => void;
   batchLoading?: boolean;
   selectedJobIds?: Set<number>;
+  onToggleSelectBulk?: (id: number) => void;
   onToggleSelect?: (id: number) => void;
   onToggleBulkCancelSelect?: (id: number) => void;
   onSelectAll?: () => void;
@@ -770,6 +794,13 @@ function JobSection({
           <h2 className="text-lg font-semibold">{title}</h2>
           <p className="text-sm text-slate-500">{subtitle}</p>
         </div>
+        <div className="flex items-center gap-2">
+          {/* Batch approve controls — client only, pending review jobs */}
+          {role === "client" && hasPendingReview && (
+            <>
+              <span className="text-xs text-slate-400">
+                {selectedJobs?.size ?? 0} of {pendingReviewIds.length} selected
+              </span>
         <div className="flex flex-wrap items-center gap-2">
           {role === "client" && hasPendingReview && (
             <div className="flex items-center gap-2">
@@ -807,6 +838,13 @@ function JobSection({
                 disabled={!selectedJobs || selectedJobs.size === 0 || batchLoading}
                 className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
+                {batchLoading ? "Approving..." : `Approve Selected (${selectedJobs?.size ?? 0})`}
+              </button>
+            </>
+          )}
+          {/* Bulk cancel controls — client only, at least 1 open job */}
+          {role === "client" && openClientJobs.length > 0 && (
+            <>
                 {batchLoading
                   ? "Approving..."
                   : `Approve Selected (${selectedJobs?.size ?? 0})`}
@@ -830,6 +868,11 @@ function JobSection({
                   onClick={onBulkCancel}
                 >
                   {bulkCancelProgress
+                    ? `Cancelling… ${bulkCancelProgress.done}/${bulkCancelProgress.total}`
+                    : `Cancel selected (${selectionCount})`}
+                </button>
+              )}
+            </>
                     ? `Cancelling... ${bulkCancelProgress.done}/${bulkCancelProgress.total}`
                     : `Cancel selected (${selectionCount})`}
                 </button>
@@ -895,6 +938,14 @@ function JobSection({
                 isLoading={actionLoading === id}
                 onAction={onAction}
                 onRequestAction={onRequestAction}
+                isSelected={(selectedJobs?.has(id) ?? false) || selectedJobIds.has(id)}
+                selectionTone={job.status === "SubmittedForReview" ? "emerald" : "red"}
+                onToggleSelect={
+                  job.status === "SubmittedForReview" ? onToggleSelect : undefined
+                }
+                onToggleSelectBulk={
+                  job.status === "Open" && role === "client" ? onToggleSelectBulk : undefined
+                }
                 isSelected={selectedJobs?.has(id) ?? false}
                 onToggleSelect={role === "client" && job.status === "SubmittedForReview" ? onToggleSelect : undefined}
                 isBulkCancelSelected={selectedJobIds.has(id)}
@@ -917,7 +968,9 @@ function JobCard({
   onAction,
   onRequestAction,
   isSelected = false,
+  selectionTone = "red",
   onToggleSelect,
+  onToggleSelectBulk,
   selectMode,
   isBulkCancelSelected = false,
   onToggleBulkCancelSelect,
@@ -930,7 +983,9 @@ function JobCard({
   onAction: (fn: () => Promise<unknown>, jobId: number, notification?: { event: NotificationEvent; message: string }) => Promise<void>;
   onRequestAction: (type: PendingDashAction["type"], jobId: number, amountXlm: string) => void;
   isSelected?: boolean;
+  selectionTone?: "emerald" | "red";
   onToggleSelect?: (id: number) => void;
+  onToggleSelectBulk?: (id: number) => void;
   selectMode?: "cancel" | "approve";
 }) {
   const actions = getActions(id, job, wallet, role);
@@ -943,12 +998,28 @@ function JobCard({
         : "";
 
   return (
+    <article
+      className={`interactive-card h-full p-4 ${
+        isSelected
+          ? selectionTone === "emerald"
+            ? "ring-2 ring-emerald-400"
+            : "ring-2 ring-red-400"
+          : ""
+      }`}
+    >
     <article className={`interactive-card h-full p-4 ${ringClass}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2">
           {onToggleSelect && (
             <input
               type="checkbox"
+              aria-label={`Select Job #${id} for batch approval`}
+              checked={isSelected}
+              onChange={() => onToggleSelect(id)}
+              className="h-4 w-4 rounded border-slate-300 text-emerald-600"
+            />
+          )}
+          {onToggleSelectBulk && (
               aria-label={
                 selectMode === "approve"
                   ? `Select Job #${id} for batch approval`
@@ -978,6 +1049,8 @@ function JobCard({
             <input
               type="checkbox"
               checked={isSelected}
+              onChange={() => onToggleSelectBulk(id)}
+              className="h-4 w-4 cursor-pointer rounded border-slate-300 accent-red-600"
               onChange={() => onToggleSelect(id)}
               className="h-4 w-4 rounded border-slate-300 text-emerald-600"
               aria-label={`Select Job #${id} for batch approval`}
@@ -1035,12 +1108,14 @@ function JobCard({
             const needsConfirm =
               action.label === "Cancel Job" ||
               action.label === "Approve Work" ||
-              action.label === "Submit Work";
+              action.label === "Submit Work" ||
+              action.label === "Enforce Deadline";
 
             const actionTypeMap: Record<string, PendingDashAction["type"]> = {
               "Cancel Job": role === "freelancer" ? "freelancerCancelJob" : "cancelJob",
               "Approve Work": "approveWork",
               "Submit Work": "submitWork",
+              "Enforce Deadline": "enforceDeadline",
             };
 
             return (
