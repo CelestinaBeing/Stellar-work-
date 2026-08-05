@@ -136,7 +136,7 @@ export const Navigation = memo(function Navigation() {
   };
 
   const adminAddress = process.env.NEXT_PUBLIC_ADMIN_ADDRESS;
-  const showAdmin = wallet && (adminAddress ? wallet === adminAddress : true);
+  const showAdmin = wallet && adminAddress && wallet === adminAddress;
 
   const links: Array<{ href: string; label: string; shortcut?: string }> = [
     { href: "/", label: "Jobs" },
