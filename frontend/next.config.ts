@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 import createNextIntlPlugin from "next-intl/plugin";
 import { withSentryConfig } from "@sentry/nextjs";
+import withBundleAnalyzer from "@next/bundle-analyzer";
 
 const withNextIntl = createNextIntlPlugin("./i18n/request.ts");
 
@@ -37,3 +38,6 @@ export default withSentryConfig(withNextIntl(nextConfig), {
   disableLogger: true,
   automaticVercelMonitors: false,
 });
+export default withBundleAnalyzer({
+  enabled: process.env.ANALYZE === "true",
+})(withNextIntl(nextConfig));
