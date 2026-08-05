@@ -37,7 +37,8 @@ export interface Job {
   deadline: string;
   token: string;
   revision_count: number;
-  submitted_at: string;
+  /** Unix timestamp the freelancer last submitted work, when the contract exposes it. */
+  submitted_at?: string;
 }
 
 /** A single milestone within a milestone-based job. */
