@@ -540,6 +540,34 @@ impl EscrowContract {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
+    }
+
+    pub fn get_job(env: Env, job_id: u64) -> Job {
+        get_job(&env, job_id)
+    }
+
+    pub fn get_job_count(env: Env) -> u64 {
+        env.storage().instance().get(&DataKey::JobCount).unwrap_or(0)
+    }
+
+    pub fn get_completed_jobs_count(env: Env) -> u64 {
+        env.storage().instance().get(&DataKey::CompletedJobsCount).unwrap_or(0)
+    }
+
+    pub fn get_freelancer_jobs(env: Env, freelancer: Address) -> Vec<u64> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::FreelancerJobs(freelancer))
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    pub fn get_client_jobs(env: Env, client: Address) -> Vec<u64> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ClientJobs(client))
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
     pub fn get_job_status_counts(env: Env) -> JobStatusCounts {
         let count: u64 = env.storage().instance().get(&DataKey::JobCount).unwrap_or(0);
         let mut open: u64 = 0;
@@ -626,6 +654,34 @@ impl EscrowContract {
         }
     }
 
+    pub fn get_sla_status(env: Env, job_id: u64) -> SLAStatus {
+        let has_config = env.storage().persistent().has(&DataKey::SLAConfig(job_id));
+        let (response_time_ledgers, delivery_time_ledgers, penalty_bps, auto_escalate) =
+            if has_config {
+                let cfg: SLAConfig = env.storage().persistent().get(&DataKey::SLAConfig(job_id)).unwrap();
+                (cfg.response_time_ledgers, cfg.delivery_time_ledgers, cfg.penalty_bps, cfg.auto_escalate)
+            } else {
+                (0u64, 0u64, 0u64, false)
+            };
+        let accepted_at: u64 = env.storage().persistent().get(&DataKey::SLAAcceptedAt(job_id)).unwrap_or(0);
+        let breached = if accepted_at > 0 && delivery_time_ledgers > 0 {
+            current_ledger(&env) > accepted_at + delivery_time_ledgers
+        } else {
+            false
+        };
+        let penalty_applied: bool = env.storage().persistent().get(&DataKey::SLAPenaltyApplied(job_id)).unwrap_or(false);
+        SLAStatus {
+            has_config,
+            response_time_ledgers,
+            delivery_time_ledgers,
+            penalty_bps,
+            auto_escalate,
+            accepted_at,
+            breached,
+            penalty_applied,
+        }
+    }
+
     pub fn set_discount_tiers(env: Env, admin: Address, tiers: Vec<DiscountTier>) {
         admin.require_auth();
         require_admin(&env);
@@ -641,6 +697,31 @@ impl EscrowContract {
 
     pub fn get_discount_tiers(env: Env) -> Vec<DiscountTier> {
         env.storage()
+            .instance()
+            .get(&DataKey::DiscountTiers)
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    pub fn calculate_effective_fee_bps(env: Env, user: Address) -> u32 {
+        let base_fee: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::BaseFeeBps)
+            .unwrap_or(PLATFORM_FEE_BPS as u32);
+
+        let completed_jobs = Self::get_user_completed_jobs(env.clone(), user);
+        let tiers = Self::get_discount_tiers(env.clone());
+
+        let mut discount_bps = 0u32;
+        for tier in tiers.iter() {
+            if completed_jobs >= tier.min_completed_jobs {
+                discount_bps = tier.discount_bps;
+            }
+        }
+
+        base_fee.saturating_sub(discount_bps)
+    }
+
             .instance()
             .get(&DataKey::DiscountTiers)
             .unwrap_or_else(|| Vec::new(&env))
@@ -853,6 +934,33 @@ impl EscrowContract {
 
         count
     }
+
+        let mut c_jobs: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ClientJobs(client.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+        c_jobs.push_back(count);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ClientJobs(client.clone()), &c_jobs);
+
+        count
+    }
+
+    pub fn approve_milestone(env: Env, client: Address, job_id: u64, milestone_id: u32) {
+        client.require_auth();
+        let job = get_job(&env, job_id);
+        if job.client != client { panic!("not authorized"); }
+        if job.status != JobStatus::InProgress && job.status != JobStatus::SubmittedForReview {
+            panic!("job not active");
+        }
+        let mut ms: Milestone = env.storage().persistent()
+            .get(&DataKey::Milestone(job_id, milestone_id))
+            .unwrap_or_else(|| panic!("milestone not found"));
+        if ms.is_released { panic!("already released"); }
+        ms.is_released = true;
+        env.storage().persistent().set(&DataKey::Milestone(job_id, milestone_id), &ms);
 
     pub fn approve_milestone(env: Env, client: Address, job_id: u64, milestone_id: u32) {
         client.require_auth();
