@@ -267,6 +267,53 @@ fn test_milestones() {
 }
 
 #[test]
+fn test_complete_milestone_with_fees() {
+    let env = Env::default();
+    let (admin, client, freelancer, token, contract_id) = setup_test(&env);
+    let escrow = new_escrow(&env, &contract_id);
+    let deadline: u64 = 1000;
+
+    let m1 = Milestone {
+        id: 0,
+        description_hash: BytesN::from_array(&env, &[1u8; 32]),
+        amount: 50_0000000i128,
+        is_released: false,
+    };
+    let m2 = Milestone {
+        id: 0,
+        description_hash: BytesN::from_array(&env, &[2u8; 32]),
+        amount: 50_0000000i128,
+        is_released: false,
+    };
+    let milestones = vec![&env, m1, m2];
+
+    let job_id = escrow.create_job_with_milestones(&client, &milestones, &deadline, &token);
+    assert_eq!(job_id, 1);
+
+    escrow.accept_job(&freelancer, &job_id);
+
+    let token_client = token::Client::new(&env, &token);
+    let pre_balance = token_client.balance(&freelancer);
+    let pre_fees = escrow.get_fees();
+
+    // Complete the first milestone — should deduct platform fee
+    escrow.complete_milestone(&client, &job_id, &0u32);
+
+    let post_balance = token_client.balance(&freelancer);
+    let post_fees = escrow.get_fees();
+
+    let expected_fee = 50_0000000i128 * PLATFORM_FEE_BPS as i128 / 10000;
+    let expected_payout = 50_0000000i128 - expected_fee;
+
+    assert_eq!(post_balance - pre_balance, expected_payout);
+    assert_eq!(post_fees - pre_fees, expected_fee);
+
+    let stored = escrow.get_milestones(&job_id);
+    assert!(stored.get(0).unwrap().is_released);
+    assert!(!stored.get(1).unwrap().is_released);
+}
+
+#[test]
 fn test_trusted_forwarder() {
     let env = Env::default();
     let (admin, client, _freelancer, token, contract_id) = setup_test(&env);

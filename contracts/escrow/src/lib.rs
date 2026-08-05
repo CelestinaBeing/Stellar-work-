@@ -355,6 +355,39 @@ pub enum PauseState {
     NotCollaborativeJob = 42,
 }
 
+# [contract]
+pub struct EscrowContract;
+
+fn get_job(env: &Env, job_id: u64) -> Job {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Job(job_id))
+        .expect("Job not found")
+}
+
+fn save_job(env: &Env, job_id: u64, job: &Job) {
+    env.storage().persistent().set(&DataKey::Job(job_id), job);
+}
+
+fn increment_completed_count(env: &Env) {
+    let current: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::CompletedJobsCount)
+        .unwrap_or(0);
+    env.storage()
+        .instance()
+        .set(&DataKey::CompletedJobsCount, &(current + 1));
+}
+
+fn check_whitelist(env: &Env, address: &Address) -> Result<(), Error> {
+    let is_blacklisted: bool = env
+        .storage()
+        .instance()
+        .get(&DataKey::Blacklist(address.clone()))
+        .unwrap_or(false);
+    if is_blacklisted {
+        return Err(Error::Blacklisted);
 #[contract]
 pub struct Escrow;
 
@@ -403,6 +436,19 @@ impl EscrowContract {
         e.storage().persistent().get(&DataKey::AuditLog(id))
     }
 
+    Ok(())
+}
+
+#[contractimpl]
+impl EscrowContract {
+    pub fn initialize(env: Env, admin: Address, native_token: Address) -> Result<(), Error> {
+        if env
+            .storage()
+            .instance()
+            .get::<DataKey, Address>(&DataKey::Admin)
+            .is_some()
+        {
+            return Err(Error::AlreadyInitialized);
     fn write_audit(e: &Env, caller: Address, operation: &str, job_id: Option<u64>, details: &str) {
         let mut count: u64 = e.storage().persistent().get(&DataKey::AuditCount).unwrap_or(0);
         count += 1;
@@ -794,6 +840,10 @@ impl EscrowContract {
         exit_reentrancy_guard(&env);
         job.status = JobStatus::Completed;
         put_job(&env, job_id, &job);
+    }
+
+    pub fn get_job(env: Env, job_id: u64) -> Job {
+        get_job(&env, job_id)
         desc_hash: Bytes,
         description_payload_len: u32,
         deadline: u64,
@@ -1503,6 +1553,24 @@ impl EscrowContract {
         );
     }
 
+    pub fn store_description_cid(env: Env, caller: Address, _job_id: u64, _cid: Bytes) {
+        caller.require_auth();
+    }
+
+    pub fn get_job(env: Env, job_id: u64) -> Job {
+        get_job(&env, job_id)
+    }
+
+    pub fn get_job_count(env: Env) -> u64 {
+        env.storage().instance().get(&DataKey::JobCount).unwrap_or(0)
+    }
+
+    pub fn get_completed_jobs_count(env: Env) -> u64 {
+        env.storage().instance().get(&DataKey::CompletedJobsCount).unwrap_or(0)
+    }
+
+    pub fn get_fees(env: Env) -> i128 {
+        env.storage().instance().get::<_, Fees>(&DataKey::Fees).unwrap_or(Fees { total_collected: 0 }).total_collected
     pub fn emergency_recover(env: Env, to: Address) {
         let admin = env.storage().instance().get::<_, Address>(&DataKey::Admin).expect("Not initialized");
         admin.require_auth();
@@ -1855,6 +1923,50 @@ impl EscrowContract {
         if caller != admin {
             panic_with_error!(&e, Error::UnauthorizedAdmin);
         }
+    }
+
+    /// Complete a milestone by index, releasing the payment to the freelancer
+    /// with the platform fee deducted. Only the job client may call this.
+    pub fn complete_milestone(env: Env, client: Address, job_id: u64, milestone_index: u32) {
+        client.require_auth();
+        let job = get_job(&env, job_id);
+        if job.client != client { panic!("not authorized"); }
+        if job.status != JobStatus::InProgress && job.status != JobStatus::SubmittedForReview {
+            panic!("job not active");
+        }
+        let mut ms: Milestone = env.storage().persistent()
+            .get(&DataKey::Milestone(job_id, milestone_index))
+            .unwrap_or_else(|| panic!("milestone not found"));
+        if ms.is_released { panic!("already released"); }
+
+        let fee = ms.amount * PLATFORM_FEE_BPS as i128 / 10000;
+        let payout = ms.amount - fee;
+
+        let mut fees: Fees = env.storage().instance()
+            .get(&DataKey::Fees)
+            .unwrap_or(Fees { total_collected: 0 });
+        fees.total_collected += fee;
+        env.storage().instance().set(&DataKey::Fees, &fees);
+
+        ms.is_released = true;
+        env.storage().persistent().set(&DataKey::Milestone(job_id, milestone_index), &ms);
+
+        let token = token::Client::new(&env, &job.token);
+        if let Some(freelancer) = &job.freelancer {
+            token.transfer(&env.current_contract_address(), freelancer, &payout);
+        }
+    }
+
+    pub fn get_milestones(env: Env, job_id: u64) -> Vec<Milestone> {
+        let count: u32 = env.storage().persistent()
+            .get(&DataKey::MilestoneCount(job_id))
+            .unwrap_or(0);
+        let mut result: Vec<Milestone> = Vec::new(&env);
+        for i in 0..count {
+            let ms: Milestone = env.storage().persistent()
+                .get(&DataKey::Milestone(job_id, i))
+                .unwrap();
+            result.push_back(ms);
         if max_bytes < MIN_DESCRIPTION_PAYLOAD_MAX_BYTES
             || max_bytes > MAX_DESCRIPTION_PAYLOAD_MAX_BYTES
         {
@@ -1916,6 +2028,7 @@ impl EscrowContract {
             .unwrap_or(JobVisibility::Public)
     }
 
+mod test;
     pub fn set_job_visibility(e: Env, client: Address, job_id: u64, visibility: JobVisibility) {
         client.require_auth();
         let job = get_job_or_panic(&e, job_id);
