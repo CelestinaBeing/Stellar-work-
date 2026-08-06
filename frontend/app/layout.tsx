@@ -4,7 +4,6 @@ import Link from "next/link";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import { WalletProvider } from "@/lib/wallet-context";
 import { ToastProvider } from "@/components/ToastProvider";
 import { NotificationProvider } from "@/lib/notifications-context";
@@ -29,6 +28,7 @@ const InstallPrompt = dynamic(() => import("@/components/InstallPrompt"), { ssr:
 const ServiceWorkerRegistration = dynamic(() => import("@/components/ServiceWorkerRegistration"), { ssr: false });
 const AnnouncementBanner = dynamic(() => import("@/components/AnnouncementBanner"), { ssr: false });
 const MetricsReporter = dynamic(() => import("@/components/MetricsReporter"), { ssr: false });
+const Sidebar = dynamic(() => import("@/components/Sidebar"), { ssr: false });
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -160,9 +160,10 @@ export default async function RootLayout({
           <MetricsReporter />
           <AnnouncementBanner />
           <OfflineIndicator />
+          <Sidebar />
           <Navigation />
           <ScrollRestorer />
-          <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-5xl flex-1 px-3 py-6 sm:px-4 sm:py-8">
+          <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-5xl flex-1 px-3 py-6 sm:px-4 sm:py-8 lg:ml-[220px]">
             <ErrorBoundary>{children}</ErrorBoundary>
           </main>
           <footer className="mt-auto border-t border-slate-200 bg-white py-8">

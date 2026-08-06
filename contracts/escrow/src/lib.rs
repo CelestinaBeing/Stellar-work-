@@ -258,12 +258,7 @@ pub enum Error {
     NegativeAmount = 28,
     DeadlineTooSoon = 29,
     PayloadTooLarge = 30,
-    RevisionLimitReached = 31,
-}
-
-#[derive(Clone, Debug)]
-#[contracttype]
-    pub submitted_at: u64,
+     RevisionLimitReached = 31,
 }
 
 #[contracttype]
@@ -354,6 +349,14 @@ pub struct JobTemplate {
 }
 
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PaymentSplit {
+    pub recipient: Address,
+    pub share_bps: u32,
+    pub reason: soroban_sdk::String,
+}
+
+#[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
     JobsCount,
@@ -417,6 +420,9 @@ pub enum DataKey {
     MinJobDuration,
     /// Maximum allowed job duration in ledgers (0 = no restriction).
     MaxJobDuration,
+    // ── Payment splits ───────────────────────────────────────────────────────
+    PaymentSplitCount(u64),
+    PaymentSplit(u64, u32),
 }
 
 #[contracterror]
@@ -1544,6 +1550,33 @@ impl EscrowContract {
         }
         if client_share_bps < 0 || client_share_bps > BPS_DENOMINATOR {
             panic_with_error!(&e, Error::InvalidAmount);
+        }
+
+        let client_share = checked_mul_div(&e, job.amount, client_share_bps, BPS_DENOMINATOR);
+        let freelancer_share = checked_sub(&e, job.amount, client_share);
+
+        job.status = JobStatus::Cancelled;
+        set_job(&e, job_id, &job);
+        bump_instance_ttl(&e);
+
+        let token_client = token::Client::new(&e, &job.token);
+        if client_share > 0 {
+            token_client.transfer(&e.current_contract_address(), &client, &client_share);
+        }
+        if freelancer_share > 0 {
+            token_client.transfer(
+                &e.current_contract_address(),
+                &freelancer,
+                &freelancer_share,
+            );
+        }
+
+        e.events().publish(
+            (Symbol::new(&e, "job_mutually_cancelled"),),
+            (job_id, client, freelancer, client_share, freelancer_share),
+        );
+    }
+
     pub fn remove_from_whitelist(env: Env, admin: Address, addr: Address) {
         admin.require_auth();
         require_admin(&env);
@@ -1565,31 +1598,6 @@ impl EscrowContract {
             panic!("already blacklisted");
         }
         env.storage().persistent().set(&DataKey::Blacklisted(addr), &true);
-    }
-
-        let client_share = checked_mul_div(&e, job.amount, client_share_bps, BPS_DENOMINATOR);
-        let freelancer_share = checked_sub(&e, job.amount, client_share);
-
-        job.status = JobStatus::Cancelled;
-        set_job(&e, job_id, &job);
-        bump_instance_ttl(&e);
-
-        let token_client = token::Client::new(&e, &job.token);
-        if client_share > 0 {
-            token_client.transfer(&e.current_contract_address(), &client, &client_share);
-        }
-        if freelancer_share > 0 {
-            token_client.transfer(
-                &e.current_contract_address(),
-                &freelancer,
-                &freelancer_share,
-        );
-        }
-
-        e.events().publish(
-            (Symbol::new(&e, "job_mutually_cancelled"),),
-            (job_id, client, freelancer, client_share, freelancer_share),
-        );
     }
 
     pub fn extend_job_ttl(e: Env, caller: Address, job_id: u64) {
@@ -1637,6 +1645,19 @@ impl EscrowContract {
             }
             freelancer.require_auth();
             require_active_access(&e, freelancer);
+        }
+
+        let old_deadline = job.deadline;
+        job.deadline = new_deadline;
+        set_job(&e, job_id, &job);
+        bump_instance_ttl(&e);
+
+        e.events().publish(
+            (Symbol::new(&e, "deadline_extended"),),
+            (job_id, client, old_deadline, new_deadline),
+        );
+    }
+
     pub fn remove_from_blacklist(env: Env, admin: Address, addr: Address) {
         admin.require_auth();
         require_admin(&env);
@@ -1695,15 +1716,49 @@ impl EscrowContract {
         }
         if total <= 0 { panic!("invalid amount"); }
 
-        let old_deadline = job.deadline;
-        job.deadline = new_deadline;
-        set_job(&e, job_id, &job);
-        bump_instance_ttl(&e);
+        let token = token::Client::new(&env, &token_address);
+        let balance = token.balance(&client);
+        if balance < total { panic!("insufficient balance"); }
+        token.transfer(&client, &env.current_contract_address(), &total);
 
-        e.events().publish(
-            (Symbol::new(&e, "deadline_extended"),),
-            (job_id, client, old_deadline, new_deadline),
-        );
+        let mut count: u64 = env.storage().instance().get(&DataKey::JobCount).unwrap_or(0);
+        count += 1;
+        env.storage().instance().set(&DataKey::JobCount, &count);
+
+        let milestone_count: u32 = milestones.len() as u32;
+        env.storage().persistent().set(&DataKey::MilestoneCount(count), &milestone_count);
+        for (i, m) in milestones.iter().enumerate() {
+            env.storage().persistent().set(&DataKey::Milestone(count, i as u32), &m);
+        }
+
+        let job = Job {
+            client: client.clone(),
+            freelancer: None,
+            amount: total,
+            description_hash: BytesN::from_array(&env, &[0u8; 32]),
+            status: JobStatus::Open,
+            created_at: current_ledger(&env),
+            deadline,
+            token: token_address,
+            revision_count: 0,
+            submitted_at: 0,
+            title,
+            category,
+            version: INITIAL_JOB_VERSION,
+        };
+        put_job(&env, count, &job);
+
+        let mut c_jobs: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ClientJobs(client.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+        c_jobs.push_back(count);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ClientJobs(client.clone()), &c_jobs);
+
+        count
     }
 
     pub fn raise_dispute(e: Env, caller: Address, job_id: u64) {
@@ -2304,6 +2359,8 @@ impl EscrowContract {
             .persistent()
             .get::<DataKey, JobVisibility>(&DataKey::JobVisibility(job_id))
             .unwrap_or(JobVisibility::Public)
+    }
+
     pub fn approve_milestone(env: Env, client: Address, job_id: u64, milestone_id: u32) {
         client.require_auth();
         let job = get_job(&env, job_id);
@@ -3052,6 +3109,109 @@ impl EscrowContract {
             total_fees_accrued,
             total_volume,
         }
+    }
+
+    pub fn approve_with_splits(e: Env, client: Address, job_id: u64, splits: Vec<PaymentSplit>) {
+        client.require_auth();
+        require_active_access(&e, &client);
+
+        let mut job = get_job_or_panic(&e, job_id);
+        if job.client != client {
+            panic_with_error!(&e, Error::Unauthorized);
+        }
+        if job.status != JobStatus::SubmittedForReview {
+            panic_with_error!(&e, Error::InvalidStatus);
+        }
+
+        let freelancer = match job.freelancer.clone() {
+            Option::Some(addr) => addr,
+            Option::None => panic_with_error!(&e, Error::InvalidStatus),
+        };
+
+        let mut total_bps: u32 = 0;
+        for i in 0..splits.len() {
+            let split = splits.get(i).unwrap();
+            if split.share_bps > 5_000 {
+                panic_with_error!(&e, Error::InvalidAmount);
+            }
+            total_bps += split.share_bps;
+        }
+        if total_bps != BPS_DENOMINATOR as u32 {
+            panic_with_error!(&e, Error::InvalidAmount);
+        }
+
+        let fee_bps = get_fee_bps_storage(&e);
+        let total_fee = checked_mul_div(&e, job.amount, fee_bps, BPS_DENOMINATOR);
+        let distributable = checked_sub(&e, job.amount, total_fee);
+
+        let current_fees = get_token_fees(&e, &job.token);
+        let updated_fees = checked_add(&e, current_fees, total_fee);
+        e.storage().persistent().set(&DataKey::TokenFees(job.token.clone()), &updated_fees);
+        bump_token_fees_ttl(&e, &job.token);
+
+        let token_client = token::Client::new(&e, &job.token);
+        for i in 0..splits.len() {
+            let split = splits.get(i).unwrap();
+            let share_amount = checked_mul_div(&e, distributable, split.share_bps as i128, BPS_DENOMINATOR);
+            if share_amount > 0 {
+                token_client.transfer(&e.current_contract_address(), &split.recipient, &share_amount);
+            }
+            e.events().publish(
+                (Symbol::new(&e, "payment_split_released"),),
+                (job_id, split.recipient.clone(), share_amount, split.reason.clone()),
+            );
+        }
+
+        job.status = JobStatus::Completed;
+        set_job(&e, job_id, &job);
+        bump_instance_ttl(&e);
+
+        e.events().publish(
+            (Symbol::new(&e, "job_approved"),),
+            (job_id, client.clone(), freelancer.clone(), distributable),
+        );
+    }
+
+    pub fn set_payment_splits(e: Env, client: Address, job_id: u64, splits: Vec<PaymentSplit>) {
+        client.require_auth();
+        let job = get_job_or_panic(&e, job_id);
+        if job.client != client {
+            panic_with_error!(&e, Error::Unauthorized);
+        }
+        if job.status != JobStatus::Open {
+            panic_with_error!(&e, Error::InvalidStatus);
+        }
+
+        let mut total_bps: u32 = 0;
+        for i in 0..splits.len() {
+            let split = splits.get(i).unwrap();
+            if split.share_bps > 5_000 {
+                panic_with_error!(&e, Error::InvalidAmount);
+            }
+            total_bps += split.share_bps;
+        }
+        if total_bps != BPS_DENOMINATOR as u32 {
+            panic_with_error!(&e, Error::InvalidAmount);
+        }
+
+        let count = splits.len();
+        e.storage().persistent().set(&DataKey::PaymentSplitCount(job_id), &(count as u32));
+        for i in 0..count {
+            let split = splits.get(i as u32).unwrap();
+            e.storage().persistent().set(&DataKey::PaymentSplit(job_id, i as u32), &split);
+        }
+        bump_instance_ttl(&e);
+    }
+
+    pub fn get_available_splits(e: Env, job_id: u64) -> Vec<PaymentSplit> {
+        let count: u32 = e.storage().persistent().get(&DataKey::PaymentSplitCount(job_id)).unwrap_or(0);
+        let mut result: Vec<PaymentSplit> = Vec::new(&e);
+        for i in 0..count {
+            if let Some(split) = e.storage().persistent().get::<DataKey, PaymentSplit>(&DataKey::PaymentSplit(job_id, i)) {
+                result.push_back(split);
+            }
+        }
+        result
     }
 }
 
@@ -9380,7 +9540,7 @@ mod test {
         }
         env.storage().instance().remove(&key);
     }
-}
+
     // ── Issue #412: Referral reward system tests ──────────────────────────────
 
     #[test]
@@ -10111,5 +10271,121 @@ mod test {
         let (_, client, _, user, _, _) = setup();
         client.get_dashboard_stats(&user);
     }
+
+    #[test]
+    fn approve_with_splits_distributes_correctly() {
+        let (env, client, _, user, freelancer, native_token) = setup();
+        let job_id = client.post_job(&user, &1_000_000i128, &hash(&env), &32u32, &0u64, &native_token);
+        client.accept_job(&freelancer, &job_id);
+        client.submit_work(&freelancer, &job_id);
+
+        let referrer = Address::generate(&env);
+        let splits = soroban_sdk::vec![
+            &env,
+            PaymentSplit {
+                recipient: freelancer.clone(),
+                share_bps: 7_000,
+                reason: soroban_sdk::String::from_str(&env, "freelancer"),
+            },
+            PaymentSplit {
+                recipient: referrer.clone(),
+                share_bps: 3_000,
+                reason: soroban_sdk::String::from_str(&env, "referrer"),
+            },
+        ];
+
+        let token_client = token::Client::new(&env, &native_token);
+        let freelancer_pre = token_client.balance(&freelancer);
+        let referrer_pre = token_client.balance(&referrer);
+
+        client.approve_with_splits(&user, &job_id, &splits);
+
+        let fee = 1_000_000 * DEFAULT_FEE_BPS / BPS_DENOMINATOR;
+        let distributable = 1_000_000 - fee;
+        let freelancer_share = distributable * 7_000 / 10_000;
+        let referrer_share = distributable * 3_000 / 10_000;
+
+        assert_eq!(token_client.balance(&freelancer) - freelancer_pre, freelancer_share);
+        assert_eq!(token_client.balance(&referrer) - referrer_pre, referrer_share);
+        assert_eq!(client.get_job(&job_id).status, JobStatus::Completed);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #11)")]
+    fn approve_with_splits_rejects_invalid_total() {
+        let (env, client, _, user, freelancer, native_token) = setup();
+        let job_id = client.post_job(&user, &1_000_000i128, &hash(&env), &32u32, &0u64, &native_token);
+        client.accept_job(&freelancer, &job_id);
+        client.submit_work(&freelancer, &job_id);
+
+        let splits = soroban_sdk::vec![
+            &env,
+            PaymentSplit {
+                recipient: freelancer.clone(),
+                share_bps: 5_000,
+                reason: soroban_sdk::String::from_str(&env, "partial"),
+            },
+        ];
+        client.approve_with_splits(&user, &job_id, &splits);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #11)")]
+    fn approve_with_splits_rejects_single_over_max() {
+        let (env, client, _, user, freelancer, native_token) = setup();
+        let job_id = client.post_job(&user, &1_000_000i128, &hash(&env), &32u32, &0u64, &native_token);
+        client.accept_job(&freelancer, &job_id);
+        client.submit_work(&freelancer, &job_id);
+
+        let other = Address::generate(&env);
+        let splits = soroban_sdk::vec![
+            &env,
+            PaymentSplit {
+                recipient: freelancer.clone(),
+                share_bps: 6_000,
+                reason: soroban_sdk::String::from_str(&env, "too_much"),
+            },
+            PaymentSplit {
+                recipient: other,
+                share_bps: 4_000,
+                reason: soroban_sdk::String::from_str(&env, "other"),
+            },
+        ];
+        client.approve_with_splits(&user, &job_id, &splits);
+    }
+
+    #[test]
+    fn set_and_get_payment_splits() {
+        let (env, client, _, user, _, native_token) = setup();
+        let job_id = client.post_job(&user, &1_000_000i128, &hash(&env), &32u32, &0u64, &native_token);
+
+        let referrer = Address::generate(&env);
+        let splits = soroban_sdk::vec![
+            &env,
+            PaymentSplit {
+                recipient: user.clone(),
+                share_bps: 7_000,
+                reason: soroban_sdk::String::from_str(&env, "freelancer"),
+            },
+            PaymentSplit {
+                recipient: referrer,
+                share_bps: 3_000,
+                reason: soroban_sdk::String::from_str(&env, "referrer"),
+            },
+        ];
+
+        client.set_payment_splits(&user, &job_id, &splits);
+        let stored = client.get_available_splits(&job_id);
+        assert_eq!(stored.len(), 2);
+        assert_eq!(stored.get(0).unwrap().share_bps, 7_000);
+        assert_eq!(stored.get(1).unwrap().share_bps, 3_000);
+    }
+
+    #[test]
+    fn get_available_splits_returns_empty_when_none() {
+        let (env, client, _, user, _, native_token) = setup();
+        let job_id = client.post_job(&user, &1_000_000i128, &hash(&env), &32u32, &0u64, &native_token);
+        let stored = client.get_available_splits(&job_id);
+        assert_eq!(stored.len(), 0);
+    }
 }
-mod test;
